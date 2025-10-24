@@ -1,0 +1,29 @@
+# OpenBB Trading Bot v3.0 Requirements
+
+# Core trading libraries
+openbb>=4.0.0
+alpaca-py>=0.42.0
+
+# Data processing
+pandas>=2.0.0
+numpy>=1.24.0
+
+# API requests
+requests>=2.31.0
+aiohttp>=3.9.0
+
+# Environment variables
+python-dotenv>=1.0.0
+
+# Terminal colors (Windows compatible)
+colorama>=0.4.6
+
+# System utilities
+psutil>=5.9.0
+pytz>=2023.3
+
+# Earnings calendar
+yfinance>=0.2.0
+
+# Optional: Enhanced analysis
+scipy>=1.11.0

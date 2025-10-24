@@ -1,0 +1,16 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(pscp -i \"C:\\Users\\kyler\\Downloads\\Trading.ppk\" \"C:\\Users\\kyler\\Documents\\AI_BOT\\src\\utils\\greeks_calculator.py\" ubuntu@ec2-3-101-103-242.us-west-1.compute.amazonaws.com:src/utils/greeks_calculator.py)",
+      "Bash(pscp -i \"C:\\Users\\kyler\\Downloads\\Trading.ppk\" \"C:\\Users\\kyler\\Documents\\AI_BOT\\src\\analyzers\\openbb_client.py\" ubuntu@ec2-3-101-103-242.us-west-1.compute.amazonaws.com:src/analyzers/openbb_client.py)",
+      "Bash(pscp -i \"C:\\Users\\kyler\\Downloads\\Trading.ppk\" \"C:\\Users\\kyler\\Documents\\AI_BOT\\src\\scanners\\expert_scanner.py\" ubuntu@ec2-3-101-103-242.us-west-1.compute.amazonaws.com:src/scanners/expert_scanner.py)",
+      "Bash(pscp -i \"C:\\Users\\kyler\\Downloads\\Trading.ppk\" \"C:\\Users\\kyler\\Documents\\AI_BOT\\src\\strategies\\multi_leg_order_manager.py\" ubuntu@ec2-3-101-103-242.us-west-1.compute.amazonaws.com:src/strategies/multi_leg_order_manager.py)",
+      "Bash(pscp -i \"C:\\Users\\kyler\\Downloads\\Trading.ppk\" \"C:\\Users\\kyler\\Documents\\AI_BOT\\src\\bot_core.py\" ubuntu@ec2-3-101-103-242.us-west-1.compute.amazonaws.com:src/bot_core.py)",
+      "Bash(pscp -i \"C:\\Users\\kyler\\Downloads\\Trading.ppk\" \"C:\\Users\\kyler\\Documents\\AI_BOT\\src\\risk\\position_manager.py\" ubuntu@ec2-3-101-103-242.us-west-1.compute.amazonaws.com:src/risk/position_manager.py)",
+      "Bash(python -m py_compile src/analyzers/iv_analyzer.py)",
+      "Bash(pscp -i \"C:\\Users\\kyler\\Downloads\\Trading.ppk\" \"C:\\Users\\kyler\\Documents\\AI_BOT\\src\\analyzers\\iv_analyzer.py\" ubuntu@ec2-3-101-103-242.us-west-1.compute.amazonaws.com:src/analyzers/iv_analyzer.py)"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}

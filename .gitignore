@@ -1,0 +1,37 @@
+# Exclude archives and sensitive keys
+archive/
+Trading.ppk
+
+# Logs
+logs/
+*.log
+*.log.*
+bot_putty.log
+
+# Databases
+*.db
+*.db3
+*.sqlite
+*.sqlite3
+*.sqlite-shm
+*.sqlite-wal
+*.mdb
+*.accdb
+
+# Python cache/build
+__pycache__/
+*.py[cod]
+*.egg-info/
+
+# Virtual environments
+.venv/
+venv/
+
+# OS/IDE
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+ 
+# Windows reserved name file present in repo root
+nul
