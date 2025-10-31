@@ -1674,10 +1674,10 @@ Provide ONLY the formatted lines, one per symbol. No other text."""
                     min_spread_width = 0.50  # $0.50 minimum for low-priced stocks
                 elif stock_price < 100:
                     min_spread_width = 1.00  # $1.00 minimum for mid-priced stocks
-                elif stock_price < 300:
-                    min_spread_width = 5.00  # $5.00 minimum for high-priced stocks
+                elif stock_price < 500:
+                    min_spread_width = 2.50  # $2.50 minimum for high-priced stocks (allows $3-5 spreads)
                 else:
-                    min_spread_width = 10.00  # $10.00 minimum for very high-priced stocks
+                    min_spread_width = 5.00  # $5.00 minimum for very high-priced stocks (>$500)
 
                 if spread_width < min_spread_width:
                     return False, f"Spread width ${spread_width:.2f} too narrow (min ${min_spread_width:.2f} for ${stock_price:.2f} stock)"
@@ -3560,7 +3560,9 @@ Example: AAPL|EXIT|Stock momentum reversed, exit signal"""
 
             # VALIDATION 1: Supported strategy types
             SUPPORTED_STRATEGIES = [
-                'LONG_CALL', 'LONG_PUT', 'BULL_CALL_SPREAD', 'BEAR_PUT_SPREAD',
+                'LONG_CALL', 'LONG_PUT',
+                'BULL_CALL_SPREAD', 'BEAR_PUT_SPREAD',
+                'BULL_PUT_SPREAD', 'BEAR_CALL_SPREAD',
                 'IRON_CONDOR', 'STRADDLE', 'STRANGLE', 'UNKNOWN'
             ]
 
