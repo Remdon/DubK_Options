@@ -1997,21 +1997,9 @@ Provide ONLY the formatted lines, one per symbol. No other text."""
                     sleep_time = min(sleep_time, 3600)  # Max 1 hour
 
                 # Display countdown timer while sleeping
-                # Changed to use newlines instead of carriage returns to avoid scroll interference
-                if sleep_time > 60:  # Only show countdown for longer sleeps
-                    print(f"{Colors.DIM}[*] Sleeping for {sleep_time}s...{Colors.RESET}")
-                    # Print update every 60 seconds without using \r
-                    for remaining in range(sleep_time, 0, -60):
-                        if remaining <= 60:
-                            time.sleep(remaining)
-                            break
-                        time.sleep(60)
-                        # Print on new line - allows user to scroll without interruption
-                        print(f"{Colors.DIM}   {remaining - 60}s remaining...{Colors.RESET}")
-                    print(f"{Colors.DIM}[*] Sleep complete{Colors.RESET}")
-                else:
-                    print(f"{Colors.DIM}[*] Sleeping for {sleep_time}s...{Colors.RESET}")
-                    time.sleep(sleep_time)
+                # Print start message only - no updates to avoid UI clutter and scroll interference
+                print(f"{Colors.DIM}[*] Sleeping for {sleep_time}s until next check...{Colors.RESET}")
+                time.sleep(sleep_time)
 
                 print()  # Add blank line after sleep
 

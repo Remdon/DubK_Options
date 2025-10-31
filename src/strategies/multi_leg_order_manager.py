@@ -770,8 +770,16 @@ class MultiLegOrderManager:
             logging.info(f"✓ Spread closure order submitted: {strategy} for {symbol}, {len(closing_legs)} legs @ ${limit_price}")
 
         except Exception as e:
-            result['error'] = str(e)
+            error_msg = str(e)
+            result['error'] = error_msg
             logging.error(f"Failed to close spread {strategy} for {symbol}: {e}")
+
+            # Check if Alpaca doesn't allow multi-leg orders for this symbol
+            if 'symbol is not allowed for mleg order' in error_msg.lower():
+                logging.warning(f"Alpaca restriction: {symbol} not allowed for multi-leg orders (likely penny stock/low liquidity)")
+                logging.warning(f"Cannot close as atomic spread - position will remain open")
+                logging.warning(f"Manual intervention required or wait for expiration")
+                result['error'] = f"Alpaca does not allow multi-leg orders for {symbol} (penny stock restriction)"
 
         return result
 
