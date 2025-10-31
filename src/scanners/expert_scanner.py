@@ -1147,11 +1147,6 @@ class ExpertMarketScanner:
         for stock in stocks:
             symbol = stock.get('symbol', '')
 
-            # CRITICAL: Check Alpaca blacklist (penny stocks, meme stocks with multi-leg restrictions)
-            if symbol in self.config.ALPACA_BLACKLIST:
-                logging.info(f"PRE-FILTER REJECT: {symbol} - Alpaca blacklist (multi-leg order restrictions)")
-                continue
-
             # Filter out non-optionable stocks
             if symbol.endswith('F') and len(symbol) > 4:
                 continue

@@ -152,15 +152,6 @@ class Config:
         }
 
         # =====================================================================
-        # ALPACA RESTRICTIONS
-        # =====================================================================
-        # Symbols that Alpaca doesn't allow for multi-leg orders (penny stocks, meme stocks, etc.)
-        self.ALPACA_BLACKLIST = [
-            'BBAI',  # Penny stock - multi-leg orders not allowed
-            'BBBY', 'GME', 'AMC',  # Meme stocks - often restricted
-        ]
-
-        # =====================================================================
         # AI AND ANALYSIS PARAMETERS
         # =====================================================================
         self.GROK_CONFIDENCE_THRESHOLDS: Dict[str, int] = {
