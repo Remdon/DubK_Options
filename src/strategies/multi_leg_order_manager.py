@@ -543,7 +543,27 @@ class MultiLegOrderManager:
                 logging.info(f"Prepared leg {leg['type']} ${leg['strike']} {leg['side']}: {occ_symbol} @ ${limit_price}")
 
             # Calculate limit price for the spread (net debit/credit)
-            spread_limit_price = round(abs(net_debit), 2)
+            # IMPROVED: Adjust pricing based on spread type for better fill rates
+            is_credit_spread = net_debit < 0  # Negative net_debit means we're collecting credit
+            is_debit_spread = net_debit > 0   # Positive net_debit means we're paying debit
+
+            if is_credit_spread:
+                # For credit spreads: Accept 85% of max credit for faster fills
+                # Example: If we can collect $1.00, we'll accept $0.85
+                spread_limit_price = round(abs(net_debit) * 0.85, 2)
+                logging.info(f"Credit spread: Adjusted from ${abs(net_debit):.2f} to ${spread_limit_price:.2f} (85% for faster fills)")
+            elif is_debit_spread:
+                # For debit spreads: Willing to pay 10% more for fills
+                # Example: If mid price is $1.00, we'll pay up to $1.10
+                spread_limit_price = round(abs(net_debit) * 1.10, 2)
+                logging.info(f"Debit spread: Adjusted from ${abs(net_debit):.2f} to ${spread_limit_price:.2f} (110% for faster fills)")
+            else:
+                # Net zero (unlikely) - use small minimum
+                spread_limit_price = 0.05
+                logging.warning(f"Net debit is zero for {strategy}, using minimum ${spread_limit_price}")
+
+            # Ensure minimum price (avoid free spreads or rounding issues)
+            spread_limit_price = max(0.01, spread_limit_price)
 
             # Create multi-leg order
             logging.info(f"Submitting {strategy} as multi-leg order: {quantity} spreads @ net ${spread_limit_price}")
@@ -558,14 +578,34 @@ class MultiLegOrderManager:
 
             order = self.trading_client.submit_order(order_request)
 
+            # IMPROVED: Monitor order fill status for immediate feedback
+            order_id = order.id if hasattr(order, 'id') else None
+            fill_status = 'pending'
+
+            if order_id:
+                # Wait up to 5 seconds to check if order fills quickly
+                import time
+                for i in range(5):
+                    time.sleep(1)
+                    try:
+                        order_status = self.trading_client.get_order_by_id(order_id)
+                        if order_status.status in ['filled', 'partially_filled']:
+                            fill_status = str(order_status.status)
+                            logging.info(f"Order {order_id} {fill_status} quickly!")
+                            break
+                    except Exception as e:
+                        logging.debug(f"Error checking order status: {e}")
+                        break
+
             # Success!
             execution_results['success'] = True
             execution_results['legs_executed'] = len(legs)
             execution_results['total_quantity'] = quantity
             execution_results['total_cost'] = spread_limit_price * quantity * 100
-            execution_results['order_ids'].append(order.id if hasattr(order, 'id') else 'UNKNOWN')
+            execution_results['order_ids'].append(order_id if order_id else 'UNKNOWN')
+            execution_results['fill_status'] = fill_status
 
-            logging.info(f"✓ Multi-leg {strategy} executed successfully: {len(legs)} legs, {quantity} spreads @ ${spread_limit_price}")
+            logging.info(f"✓ Multi-leg {strategy} executed successfully: {len(legs)} legs, {quantity} spreads @ ${spread_limit_price} (Status: {fill_status})")
 
         except Exception as e:
             error_msg = f"Failed to execute multi-leg {strategy}: {str(e)}"

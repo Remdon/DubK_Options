@@ -57,7 +57,7 @@ class PortfolioManager:
         }
 
     def get_current_exposure(self) -> Dict:
-        """Calculate current portfolio exposure including Greeks"""
+        """Calculate current portfolio exposure including Greeks and pending orders"""
         try:
             positions = self.trading_client.get_all_positions()
             account = self.trading_client.get_account()
@@ -67,6 +67,7 @@ class PortfolioManager:
                 'by_symbol': {},
                 'total_positions': len(positions),
                 'total_allocated': 0,
+                'pending_capital': 0,  # Track capital locked in pending orders
                 'portfolio_greeks': {
                     'delta': 0,
                     'gamma': 0,
@@ -121,7 +122,47 @@ class PortfolioManager:
             exposure['processed_positions'] = processed_positions
             exposure['skipped_positions'] = skipped_positions
 
-            logging.debug(f"Exposure calc: {processed_positions} positions processed, {skipped_positions} skipped, {exposure['total_allocated']:.1%} allocated")
+            # CRITICAL: Add pending orders to exposure calculation
+            # This prevents over-allocation when orders haven't filled yet
+            try:
+                from alpaca.trading.requests import GetOrdersRequest
+                from alpaca.trading.enums import QueryOrderStatus
+
+                pending_orders = self.trading_client.get_orders(
+                    filter=GetOrdersRequest(status=QueryOrderStatus.OPEN)
+                )
+
+                pending_value = 0
+                for order in pending_orders:
+                    try:
+                        # For options, estimated value = limit_price * qty * 100
+                        # For multi-leg orders, it's the net debit/credit
+                        if order.limit_price and order.qty:
+                            order_value = abs(float(order.limit_price) * float(order.qty) * 100)
+                            pending_value += order_value
+
+                            # Track by underlying symbol
+                            underlying = extract_underlying_symbol(order.symbol) if order.symbol else 'UNKNOWN'
+                            if underlying not in exposure['by_symbol']:
+                                exposure['by_symbol'][underlying] = 0
+                            # Add pending as percentage of portfolio
+                            exposure['by_symbol'][underlying] += order_value / total_equity
+                    except Exception as e:
+                        logging.debug(f"Error processing pending order {order.id}: {e}")
+                        continue
+
+                exposure['pending_capital'] = pending_value
+                exposure['pending_orders_count'] = len(pending_orders)
+
+                # Add pending to total allocated
+                pending_pct = pending_value / total_equity
+                exposure['total_allocated'] += pending_pct
+
+                logging.debug(f"Exposure calc: {processed_positions} positions + {len(pending_orders)} pending orders, "
+                             f"{exposure['total_allocated']:.1%} total allocated (includes ${pending_value:.0f} pending)")
+            except Exception as e:
+                logging.warning(f"Could not fetch pending orders for exposure calc: {e}")
+                logging.debug(f"Exposure calc: {processed_positions} positions processed, {skipped_positions} skipped, {exposure['total_allocated']:.1%} allocated")
 
             return exposure
         except Exception as e:

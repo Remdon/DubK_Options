@@ -2694,7 +2694,9 @@ Example: AAPL|EXIT|Stock momentum reversed, exit signal"""
             logging.info(f"🎯 HOME RUN TRADE - {symbol} at {confidence}% confidence!")
 
         # Execute the options trade - ROUTE TO MULTI-LEG HANDLER FOR MULTI-LEG STRATEGIES
-        if strategy.upper() in ['IRON_CONDOR', 'STRADDLE', 'STRANGLE', 'BULL_CALL_SPREAD', 'BEAR_PUT_SPREAD']:
+        if strategy.upper() in ['IRON_CONDOR', 'STRADDLE', 'STRANGLE',
+                                'BULL_CALL_SPREAD', 'BEAR_PUT_SPREAD',
+                                'BULL_PUT_SPREAD', 'BEAR_CALL_SPREAD']:
             success = self.execute_multi_leg_strategy(
                 symbol=symbol,
                 strategy=strategy,
