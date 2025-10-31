@@ -208,11 +208,13 @@ class OptionsBot:
         self.market_scanner = ExpertMarketScanner(self.openbb, self.iv_analyzer)
         self.trade_journal = TradeJournal()
         self.portfolio_manager = PortfolioManager(self.trading_client)
-        self.position_manager = PositionManager(self.trading_client, self.trade_journal)
 
-        # Initialize multi-leg options manager
+        # Initialize multi-leg options managers first
         self.multi_leg_manager = MultiLegOptionsManager(self.trading_client, OptionsValidator)
         self.multi_leg_order_manager = MultiLegOrderManager(self.trading_client, OptionsValidator)
+
+        # Initialize position manager with multi_leg_order_manager for atomic spread closures
+        self.position_manager = PositionManager(self.trading_client, self.trade_journal, self.multi_leg_order_manager)
 
         # PHASE 1: Initialize multi-leg order tracker for atomic operations
         self.multi_leg_tracker = MultiLegOrderTracker()
@@ -2223,12 +2225,36 @@ Example: AAPL|EXIT|Stock momentum reversed, exit signal"""
                                         print(f"{Colors.WARNING}[GROK EXIT] {sym}: {action} - {reason}{Colors.RESET}")
                                         logging.info(f"*** GROK RECOMMENDS EXIT: {sym} - {action} - {reason}")
 
-                                        # Find actual position and exit
-                                        for pos in positions:
-                                            underlying = extract_underlying_symbol(pos.symbol)
-                                            if underlying == sym:
-                                                self.position_manager._execute_exit(pos, f"GROK_{action}: {reason}")
-                                                break
+                                        # Get strategy type for this position
+                                        strategy_info = self.trade_journal.get_position_strategy(sym)
+                                        strategy = strategy_info.get('strategy', 'UNKNOWN') if strategy_info else 'UNKNOWN'
+
+                                        # Check if this is a multi-leg spread strategy
+                                        multi_leg_strategies = [
+                                            'BULL_CALL_SPREAD', 'BEAR_PUT_SPREAD',
+                                            'BULL_PUT_SPREAD', 'BEAR_CALL_SPREAD',
+                                            'IRON_CONDOR', 'STRADDLE', 'STRANGLE'
+                                        ]
+
+                                        if strategy in multi_leg_strategies:
+                                            # Close spread atomically using multi-leg order manager
+                                            logging.info(f"Closing {strategy} spread for {sym} atomically")
+                                            result = self.multi_leg_order_manager.close_spread(sym, strategy, positions)
+
+                                            if result['success']:
+                                                logging.info(f"✓ Spread closed successfully: {sym} - {result['legs_closed']} legs @ ${result.get('limit_price', 'N/A')}")
+                                                # Remove from active tracking
+                                                self.trade_journal.remove_active_position(sym)
+                                            else:
+                                                logging.error(f"Failed to close spread {sym}: {result['error']}")
+                                        else:
+                                            # Single-leg position - close individually
+                                            for pos in positions:
+                                                underlying = extract_underlying_symbol(pos.symbol)
+                                                if underlying == sym:
+                                                    self.position_manager._execute_exit(pos, f"GROK_{action}: {reason}")
+                                                    break
+                                        break
 
             self.last_position_grok_check = now
 

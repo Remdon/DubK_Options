@@ -29,9 +29,10 @@ def extract_underlying_symbol(full_symbol: str) -> str:
 class PositionManager:
     """Manages position exits with stop losses and profit targets"""
 
-    def __init__(self, trading_client, trade_journal):
+    def __init__(self, trading_client, trade_journal, multi_leg_manager=None):
         self.trading_client = trading_client
         self.journal = trade_journal
+        self.multi_leg_manager = multi_leg_manager  # For closing spreads atomically
 
         # FIXED: Issue #6 - Strategy-specific stop losses
         # Exit rules (defaults)
@@ -424,7 +425,7 @@ class PositionManager:
 
     def _execute_multi_leg_exit(self, legs: List, underlying: str, reason: str, strategy: str = 'UNKNOWN') -> bool:
         """
-        Execute atomic multi-leg exit using Alpaca's multi-leg order API.
+        Execute atomic multi-leg exit using the multi-leg manager's close_spread function.
         Closes all legs of a strategy in a single atomic order to prevent orphaned positions.
 
         Args:
@@ -433,9 +434,6 @@ class PositionManager:
             reason: Exit reason
             strategy: Strategy name (for tracking)
         """
-        from alpaca.trading.requests import LimitOrderRequest, OptionLegRequest
-        from alpaca.trading.enums import OrderSide, TimeInForce, PositionIntent, OrderClass
-
         try:
             if not legs:
                 logging.warning("No legs provided to _execute_multi_leg_exit")
@@ -444,180 +442,77 @@ class PositionManager:
             logging.info(f"=== EXECUTING MULTI-LEG EXIT: {underlying} - {reason} ===")
             print(f"{Colors.WARNING}[MULTI-LEG EXIT] {underlying}: {reason}{Colors.RESET}")
 
-            # Build option legs for the closing order
-            option_legs = []
-            total_pl = 0.0
-            total_pl_pct = 0.0
-            leg_count = 0
+            # Calculate total P&L for tracking
+            total_pl = sum(float(leg.unrealized_pl) if leg.unrealized_pl else 0 for leg in legs)
+            leg_count = len(legs)
 
-            for leg in legs:
-                symbol = leg.symbol
-                qty = abs(int(leg.qty)) if leg.qty else 0
-                current_price = float(leg.current_price) if leg.current_price else 0.0
+            # Log individual legs
+            for i, leg in enumerate(legs, 1):
                 unrealized_pl = float(leg.unrealized_pl) if leg.unrealized_pl else 0.0
                 unrealized_pl_pct = float(leg.unrealized_plpc) if leg.unrealized_plpc else 0.0
+                logging.info(f"Leg {i}: {leg.symbol} | Qty: {leg.qty} | P&L: ${unrealized_pl:,.2f} ({unrealized_pl_pct:+.1%})")
+                print(f"  Leg {i}: {leg.symbol} | P&L: ${unrealized_pl:,.2f} ({unrealized_pl_pct:+.1%})")
 
-                if qty == 0:
-                    logging.warning(f"Skipping leg {symbol} with qty 0")
-                    continue
+            # Use multi-leg manager to close spread atomically
+            if self.multi_leg_manager:
+                result = self.multi_leg_manager.close_spread(underlying, strategy, legs)
 
-                # Determine closing side (opposite of current position)
-                if int(leg.qty) > 0:
-                    # Long position - close by selling
-                    close_side = OrderSide.SELL
-                    position_intent = PositionIntent.SELL_TO_CLOSE
-                else:
-                    # Short position - close by buying
-                    close_side = OrderSide.BUY
-                    position_intent = PositionIntent.BUY_TO_CLOSE
+                if result['success']:
+                    logging.info(f"✓ Multi-leg exit order submitted: Order ID {result.get('order_id')}")
+                    print(f"{Colors.SUCCESS}✓ Multi-leg exit order submitted (Order ID: {result.get('order_id')}){Colors.RESET}")
+                    print(f"  Total P&L: ${total_pl:,.2f} | {result['legs_closed']} legs closed @ ${result.get('limit_price', 'N/A')}")
 
-                # For worthless positions, try to close via close_position instead
-                if current_price <= 0.01:
-                    logging.warning(f"Leg {symbol} near worthless (${current_price:.2f}), using close_position")
-                    try:
-                        self.trading_client.close_position(symbol)
-                        total_pl += unrealized_pl
-                        leg_count += 1
-                        continue
-                    except Exception as e:
-                        logging.warning(f"close_position failed for {symbol}: {e}, will include in multi-leg order")
-
-                # Add leg to multi-leg closing order
-                option_leg = OptionLegRequest(
-                    symbol=symbol,
-                    ratio_qty=1,
-                    side=close_side,
-                    position_intent=position_intent
-                )
-                option_legs.append(option_leg)
-
-                total_pl += unrealized_pl
-                total_pl_pct += unrealized_pl_pct
-                leg_count += 1
-
-                logging.info(f"Leg {leg_count}: {symbol} | Qty: {qty} | Side: {close_side} | P&L: ${unrealized_pl:,.2f} ({unrealized_pl_pct:+.1%})")
-                print(f"  Leg {leg_count}: {symbol} | P&L: ${unrealized_pl:,.2f} ({unrealized_pl_pct:+.1%})")
-
-            if not option_legs:
-                logging.warning("No valid legs to close in multi-leg order")
-                # If all legs were closed individually, still mark as success
-                if leg_count > 0:
+                    # Remove from active position tracking
                     self.journal.remove_active_position(underlying)
+
+                    # ANTI-OVERTRADING: Track recently closed position
+                    self.recently_closed[underlying] = {
+                        'timestamp': time.time(),
+                        'pnl': total_pl,
+                        'strategy': strategy
+                    }
+
+                    # Track consecutive losses for this symbol
+                    if total_pl < 0:
+                        self.daily_loss_count[underlying] = self.daily_loss_count.get(underlying, 0) + 1
+                        logging.warning(f"{underlying}: Consecutive losses: {self.daily_loss_count[underlying]}")
+                    else:
+                        # Reset loss counter on profit
+                        if underlying in self.daily_loss_count:
+                            del self.daily_loss_count[underlying]
+
+                    # Clean up tracking
+                    for leg in legs:
+                        position_id = leg.asset_id if hasattr(leg, 'asset_id') else None
+                        if position_id and position_id in self.position_entry_times:
+                            del self.position_entry_times[position_id]
+
+                    tracking_key = f"{underlying}_{reason.split()[0]}"
+                    if tracking_key in self.position_highs:
+                        del self.position_highs[tracking_key]
+
                     return True
-                return False
-
-            # Calculate limit price for multi-leg exit
-            # CRITICAL: For multi-leg orders, limit_price is the NET debit/credit for the entire spread
-            # NOT the individual leg prices
-            #
-            # For closing positions:
-            # - Closing a debit spread (bought for $X) → selling back for $Y → net credit = Y
-            # - Closing a credit spread (sold for $X) → buying back for $Y → net debit = Y
-            #
-            # We'll use current market prices to calculate reasonable exit limit
-
-            net_exit_price = 0.0
-
-            for leg in legs:
-                current_price = float(leg.current_price) if leg.current_price else 0.0
-
-                # For closing, we reverse the original position
-                # Long position (qty > 0) → selling to close → credit
-                # Short position (qty < 0) → buying to close → debit
-                if int(leg.qty) > 0:
-                    # Selling to close - adds credit
-                    net_exit_price += current_price
                 else:
-                    # Buying to close - adds debit
-                    net_exit_price -= current_price
+                    error_msg = result.get('error', 'Unknown error')
+                    logging.error(f"Failed to close spread: {error_msg}")
+                    print(f"{Colors.ERROR}✗ Multi-leg exit failed: {error_msg}{Colors.RESET}")
 
-            # Use absolute value for the limit price
-            # Add 10% buffer to ensure fill (especially important for exits)
-            spread_exit_price = abs(net_exit_price) * 1.10
+                    # Check for orphaned leg situation
+                    if 'Only 1 leg found' in error_msg:
+                        logging.warning(f"Position {underlying} has orphaned leg - may require manual closure")
+                        print(f"{Colors.WARNING}[!] Orphaned leg detected - manual review required{Colors.RESET}")
 
-            # Set reasonable bounds
-            # Minimum $0.01, maximum $100 per spread
-            spread_exit_price = max(0.01, min(spread_exit_price, 100.0))
-
-            logging.info(f"Multi-leg exit: Net spread price ${net_exit_price:.2f}, "
-                        f"Limit price ${spread_exit_price:.2f} (with 10% buffer)")
-
-            # Submit multi-leg closing order
-            # IMPORTANT: For Alpaca paper trading, all legs must close atomically
-            # Using BUY_TO_CLOSE/SELL_TO_CLOSE position intents (already set above)
-            order_request = LimitOrderRequest(
-                qty=1,  # Each spread counts as 1 unit
-                order_class=OrderClass.MLEG,
-                time_in_force=TimeInForce.DAY,
-                legs=option_legs,
-                limit_price=spread_exit_price
-            )
-
-            order = self.trading_client.submit_order(order_request)
-            logging.info(f"Multi-leg exit order submitted: Order ID {order.id}")
-            print(f"{Colors.SUCCESS}✓ Multi-leg exit order submitted (Order ID: {order.id}){Colors.RESET}")
-            print(f"  Total P&L: ${total_pl:,.2f} | {leg_count} legs closed")
-
-            # Remove from active position tracking
-            self.journal.remove_active_position(underlying)
-
-            # ANTI-OVERTRADING: Track recently closed position
-            self.recently_closed[underlying] = {
-                'timestamp': time.time(),
-                'pnl': total_pl,
-                'strategy': strategy
-            }
-
-            # Track consecutive losses for this symbol
-            if total_pl < 0:
-                self.daily_loss_count[underlying] = self.daily_loss_count.get(underlying, 0) + 1
-                logging.warning(f"{underlying}: Consecutive losses: {self.daily_loss_count[underlying]}")
+                    return False
             else:
-                # Reset loss counter on profit
-                if underlying in self.daily_loss_count:
-                    del self.daily_loss_count[underlying]
-
-            # Clean up entry time tracking
-            for leg in legs:
-                position_id = leg.asset_id if hasattr(leg, 'asset_id') else None
-                if position_id and position_id in self.position_entry_times:
-                    del self.position_entry_times[position_id]
-
-            # Clean up high water mark tracking
-            tracking_key = f"{underlying}_{reason.split()[0]}"
-            if tracking_key in self.position_highs:
-                del self.position_highs[tracking_key]
-
-            return True
+                logging.error("Multi-leg manager not available for spread closure")
+                print(f"{Colors.ERROR}✗ Cannot close spread - multi-leg manager not initialized{Colors.RESET}")
+                return False
 
         except Exception as e:
-            error_msg = str(e).lower()
             logging.error(f"Error executing multi-leg exit for {underlying}: {e}")
             print(f"{Colors.ERROR}✗ Multi-leg exit failed: {e}{Colors.RESET}")
-
-            # Check if error is related to uncovered options
-            # Alpaca paper accounts cannot trade uncovered/naked options
-            if 'uncovered' in error_msg or 'naked' in error_msg:
-                logging.error(f"CRITICAL: Multi-leg exit rejected - paper account cannot trade uncovered options")
-                logging.error(f"This means the multi-leg order is being rejected by Alpaca")
-                logging.error(f"Possible causes:")
-                logging.error(f"  1. Multi-leg order format is incorrect")
-                logging.error(f"  2. Position intents (BUY_TO_CLOSE/SELL_TO_CLOSE) are wrong")
-                logging.error(f"  3. One leg has already been closed, leaving naked position")
-                print(f"{Colors.ERROR}[!] Cannot close legs individually - would create uncovered positions{Colors.RESET}")
-                print(f"{Colors.WARNING}[!] Keeping position open to avoid uncovered options violation{Colors.RESET}")
-
-                # DO NOT close legs individually - this creates the uncovered position problem
-                # Instead, log the issue and keep position open
-                return False
-
-            # For other errors (network, timeout, etc.), do NOT attempt individual closes
-            # Closing legs individually creates uncovered options which paper accounts can't trade
-            logging.error(f"Multi-leg exit failed, but NOT attempting individual leg closes")
-            logging.error(f"Individual leg closes would create uncovered options positions")
             logging.warning(f"Position {underlying} will remain open - manual intervention may be required")
             print(f"{Colors.WARNING}[!] Position remains open - check logs for details{Colors.RESET}")
-
             return False
 
     def _execute_exit(self, position, reason: str) -> bool:

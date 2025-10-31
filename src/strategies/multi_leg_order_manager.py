@@ -614,6 +614,167 @@ class MultiLegOrderManager:
 
         return execution_results
 
+    def close_spread(self, symbol: str, strategy: str, positions: List) -> Dict:
+        """
+        Close a multi-leg spread as an atomic order.
+
+        This function identifies all legs of a spread and closes them together
+        as a single multi-leg order, preventing orphaned legs and buying power issues.
+
+        Args:
+            symbol: Underlying symbol (e.g., 'BBAI', 'INTC')
+            strategy: Strategy type (e.g., 'BULL_PUT_SPREAD', 'BEAR_CALL_SPREAD')
+            positions: List of Alpaca position objects matching the symbol
+
+        Returns:
+            Dict with success status and details
+        """
+        result = {
+            'success': False,
+            'order_id': None,
+            'error': None,
+            'legs_closed': 0
+        }
+
+        try:
+            # Filter positions to only those matching the symbol
+            matching_positions = [p for p in positions if symbol in p.symbol]
+
+            if not matching_positions:
+                result['error'] = f"No positions found for {symbol}"
+                return result
+
+            if len(matching_positions) == 1:
+                result['error'] = f"Only 1 leg found for {symbol} - cannot close as spread (orphaned leg?)"
+                logging.warning(f"Spread {strategy} for {symbol} has only 1 leg - this may be orphaned or incorrectly tracked")
+                return result
+
+            # Build legs for the closing order (reverse the positions)
+            closing_legs = []
+            for pos in matching_positions:
+                qty = abs(int(pos.qty))
+
+                # Determine option type and strike from OCC symbol
+                # Format: SYMBOL + YYMMDD + C/P + STRIKE
+                occ_symbol = pos.symbol
+                option_type = occ_symbol[-9]  # C or P
+                strike_str = occ_symbol[-8:]   # 8-digit strike price
+                strike = float(strike_str) / 1000  # Convert to decimal
+
+                # Get expiration date
+                exp_str = occ_symbol[-15:-9]  # YYMMDD
+                exp_date = f"20{exp_str[0:2]}-{exp_str[2:4]}-{exp_str[4:6]}"
+
+                # Reverse the side: long positions → sell to close, short positions → buy to close
+                if int(pos.qty) > 0:
+                    # Long position → sell to close
+                    side = 'sell'
+                    ratio = 1
+                else:
+                    # Short position → buy to close
+                    side = 'buy'
+                    ratio = 1
+
+                closing_legs.append({
+                    'type': 'call' if option_type == 'C' else 'put',
+                    'strike': strike,
+                    'side': side,
+                    'ratio': ratio,
+                    'expiry': exp_date,
+                    'quantity': qty
+                })
+
+            # Log the closing operation
+            logging.info(f"Closing {strategy} spread for {symbol} with {len(closing_legs)} legs")
+
+            # Get current mid prices for limit pricing
+            try:
+                # Calculate reasonable limit price based on current spread value
+                # For credit spreads closing: willing to pay back up to 110% of current mid
+                # For debit spreads closing: willing to accept 90% of current mid
+
+                net_debit = 0
+                for leg in closing_legs:
+                    # Get current option price (approximate from position value)
+                    for pos in matching_positions:
+                        if leg['strike'] == float(pos.symbol[-8:]) / 1000:
+                            current_price = float(pos.current_price) if pos.current_price else 0.05
+                            # Add to net debit if buying, subtract if selling
+                            if leg['side'] == 'buy':
+                                net_debit += current_price
+                            else:
+                                net_debit -= current_price
+
+                # Set limit price with slippage for closing
+                if net_debit > 0:
+                    # Debit to close (paying to close credit spread) - pay up to 110%
+                    limit_price = round(abs(net_debit) * 1.10, 2)
+                else:
+                    # Credit to close (collecting to close debit spread) - accept 90%
+                    limit_price = round(abs(net_debit) * 0.90, 2)
+
+                limit_price = max(0.05, limit_price)  # Minimum $0.05
+
+            except Exception as e:
+                logging.warning(f"Could not calculate precise limit price: {e}, using $0.50")
+                limit_price = 0.50
+
+            # Build Alpaca multi-leg order request
+            from alpaca.trading.enums import OrderClass, PositionIntent
+
+            # Determine quantity (should be same for all legs)
+            quantity = closing_legs[0]['quantity']
+
+            # Create option leg requests
+            option_legs = []
+            for leg in closing_legs:
+                position_intent = PositionIntent.BUY_TO_CLOSE if leg['side'] == 'buy' else PositionIntent.SELL_TO_CLOSE
+
+                # Build OCC symbol from leg info
+                exp_parts = leg['expiry'].split('-')
+                exp_formatted = f"{exp_parts[0][2:]}{exp_parts[1]}{exp_parts[2]}"  # YYMMDD
+                option_type_char = 'C' if leg['type'] == 'call' else 'P'
+                strike_formatted = f"{int(leg['strike'] * 1000):08d}"
+                occ_symbol = f"{symbol}{exp_formatted}{option_type_char}{strike_formatted}"
+
+                option_legs.append(
+                    OptionLegRequest(
+                        symbol=occ_symbol,
+                        ratio_qty=leg['ratio'],
+                        side=OrderSide.BUY if leg['side'] == 'buy' else OrderSide.SELL,
+                        position_intent=position_intent
+                    )
+                )
+
+            # Submit the closing order
+            from alpaca.trading.requests import OrderRequest
+
+            order_data = OrderRequest(
+                symbol=symbol,
+                qty=quantity,
+                side=OrderSide.BUY,  # Required but ignored for multi-leg
+                type=OrderType.LIMIT,
+                time_in_force=TimeInForce.DAY,
+                order_class=OrderClass.MLEG,
+                limit_price=limit_price,
+                legs=option_legs
+            )
+
+            order = self.trading_client.submit_order(order_data)
+
+            result['success'] = True
+            result['order_id'] = order.id if hasattr(order, 'id') else None
+            result['legs_closed'] = len(closing_legs)
+            result['limit_price'] = limit_price
+
+            logging.info(f"✓ Spread closure order submitted: {strategy} for {symbol}, {len(closing_legs)} legs @ ${limit_price}")
+
+        except Exception as e:
+            result['error'] = str(e)
+            logging.error(f"Failed to close spread {strategy} for {symbol}: {e}")
+
+        return result
+
     def calculate_multi_leg_greeks(self, legs: List[Dict], symbol: str, underlying_price: float = None) -> Dict:
         """
         Calculate net Greeks for multi-leg options strategies
