@@ -91,6 +91,28 @@ class MultiLegOptionsManager:
                 {'type': 'put', 'strike': low_strike, 'side': 'sell', 'ratio': 1}
             ]
 
+        # BULL PUT SPREAD: Sell higher put, Buy lower put (credit spread - bullish)
+        elif strategy_upper == 'BULL_PUT_SPREAD':
+            if len(parsed_strikes) < 2:
+                return None
+            high_strike, low_strike = sorted(parsed_strikes[:2], reverse=True)
+            result['description'] = f'BULL PUT SPREAD ${high_strike:.2f}/${low_strike:.2f}'
+            result['legs'] = [
+                {'type': 'put', 'strike': low_strike, 'side': 'buy', 'ratio': 1},   # Buy lower put (protection)
+                {'type': 'put', 'strike': high_strike, 'side': 'sell', 'ratio': 1}  # Sell higher put (collect credit)
+            ]
+
+        # BEAR CALL SPREAD: Sell lower call, Buy higher call (credit spread - bearish)
+        elif strategy_upper == 'BEAR_CALL_SPREAD':
+            if len(parsed_strikes) < 2:
+                return None
+            low_strike, high_strike = sorted(parsed_strikes[:2])
+            result['description'] = f'BEAR CALL SPREAD ${low_strike:.2f}/${high_strike:.2f}'
+            result['legs'] = [
+                {'type': 'call', 'strike': low_strike, 'side': 'sell', 'ratio': 1},  # Sell lower call (collect credit)
+                {'type': 'call', 'strike': high_strike, 'side': 'buy', 'ratio': 1}   # Buy higher call (protection)
+            ]
+
         # IRON CONDOR: Sell higher call, Buy highest call, Buy lowest put, Sell higher put
         elif strategy_upper == 'IRON_CONDOR':
             if len(parsed_strikes) < 4:
