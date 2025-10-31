@@ -1668,10 +1668,19 @@ Provide ONLY the formatted lines, one per symbol. No other text."""
                 short_strike = float(strike_parts[1].strip())
                 spread_width = abs(long_strike - short_strike)
 
-                # Check minimum spread width (8% of stock price)
-                min_spread_width = stock_price * 0.08
+                # Check minimum spread width based on stock price tiers
+                # Use reasonable minimums that allow viable credit/debit spreads
+                if stock_price < 20:
+                    min_spread_width = 0.50  # $0.50 minimum for low-priced stocks
+                elif stock_price < 100:
+                    min_spread_width = 1.00  # $1.00 minimum for mid-priced stocks
+                elif stock_price < 300:
+                    min_spread_width = 5.00  # $5.00 minimum for high-priced stocks
+                else:
+                    min_spread_width = 10.00  # $10.00 minimum for very high-priced stocks
+
                 if spread_width < min_spread_width:
-                    return False, f"Spread width ${spread_width:.2f} too narrow (min ${min_spread_width:.2f} = 8% of ${stock_price:.2f})"
+                    return False, f"Spread width ${spread_width:.2f} too narrow (min ${min_spread_width:.2f} for ${stock_price:.2f} stock)"
 
                 # For debit spreads, validate we're not overpaying
                 if is_debit_spread:
