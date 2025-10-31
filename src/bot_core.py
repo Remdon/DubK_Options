@@ -1642,20 +1642,21 @@ Provide ONLY the formatted lines, one per symbol. No other text."""
                 if iv_rank < 70:
                     return False, f"IV rank {iv_rank:.0f}% too LOW for selling {strategy} (min 70%)"
 
-        # VALIDATION 2: IV Rank Appropriateness
+        # VALIDATION 2: IV Rank Appropriateness (Expert Trader Rules)
         # Debit spreads should ONLY be placed when IV is LOW (cheap options)
         if is_debit_spread:
-            if iv_rank > 50:
-                return False, f"IV rank {iv_rank:.0f}% too high for debit spread (max 50%)"
             if iv_rank > 40:
-                logging.warning(f"{symbol}: IV rank {iv_rank:.0f}% is borderline for debit spread (prefer <40%)")
+                return False, f"IV rank {iv_rank:.0f}% too high for debit spread (max 40% - avoid buying expensive options)"
+            if iv_rank > 30:
+                logging.warning(f"{symbol}: IV rank {iv_rank:.0f}% is borderline for debit spread (prefer <30%)")
 
-        # Credit spreads should ONLY be placed when IV is HIGH (expensive options)
+        # Credit spreads should ONLY be placed when IV is ELEVATED (expensive options to sell)
+        # Conservative approach: require 60% minimum to ensure we're selling expensive premium
         if is_credit_spread:
-            if iv_rank < 50:
-                return False, f"IV rank {iv_rank:.0f}% too low for credit spread (min 50%)"
             if iv_rank < 60:
-                logging.warning(f"{symbol}: IV rank {iv_rank:.0f}% is borderline for credit spread (prefer >60%)")
+                return False, f"IV rank {iv_rank:.0f}% too low for credit spread (min 60% - need expensive premium to sell)"
+            if iv_rank < 70:
+                logging.warning(f"{symbol}: IV rank {iv_rank:.0f}% is acceptable for credit spread but prefer >70%")
 
         # Single leg should ONLY be placed when IV is VERY LOW
         if is_single_leg:
@@ -2482,8 +2483,10 @@ Example: AAPL|EXIT|Stock momentum reversed, exit signal"""
                     strategy_details = self.multi_leg_manager.parse_multi_leg_strategy(
                         strategy, symbol, strikes, expiry, 0
                     )
-                    if strategy_details is not None and strategy_details.get('legs') is not None:
-                        for leg in strategy_details['legs']:
+                    # Properly check if strategy_details and legs exist and are iterable
+                    legs_data = strategy_details.get('legs') if strategy_details else None
+                    if legs_data is not None and isinstance(legs_data, list) and len(legs_data) > 0:
+                        for leg in legs_data:
                             # Build OCC symbol: SYMBOL + YYMMDD + C/P + STRIKE (8 digits)
                             opt_type = 'C' if leg['type'].upper() == 'CALL' else 'P'
                             strike_str = f"{int(leg['strike'] * 1000):08d}"
