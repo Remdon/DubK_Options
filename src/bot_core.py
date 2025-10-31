@@ -1997,20 +1997,19 @@ Provide ONLY the formatted lines, one per symbol. No other text."""
                     sleep_time = min(sleep_time, 3600)  # Max 1 hour
 
                 # Display countdown timer while sleeping
-                if sleep_time > 30:  # Only show countdown for longer sleeps
-                    print(f"{Colors.DIM}[*] Sleeping for {sleep_time}s...", end='', flush=True)
-                    for remaining in range(sleep_time, 0, -10):
-                        if remaining <= 10:
-                            print("\033[2K", end='\r')
-                            print(f"   {remaining}s remaining{Colors.RESET}\r", end='', flush=True)
+                # Changed to use newlines instead of carriage returns to avoid scroll interference
+                if sleep_time > 60:  # Only show countdown for longer sleeps
+                    print(f"{Colors.DIM}[*] Sleeping for {sleep_time}s...{Colors.RESET}")
+                    # Print update every 60 seconds without using \r
+                    for remaining in range(sleep_time, 0, -60):
+                        if remaining <= 60:
                             time.sleep(remaining)
                             break
-                        print("\033[2K", end='\r')
-                        print(f"   {remaining}s remaining{Colors.RESET}\r", end='', flush=True)
-                        time.sleep(10)
-                    print(f"{Colors.DIM}[*] Sleep complete{Colors.RESET}" + " " * 30)
+                        time.sleep(60)
+                        # Print on new line - allows user to scroll without interruption
+                        print(f"{Colors.DIM}   {remaining - 60}s remaining...{Colors.RESET}")
+                    print(f"{Colors.DIM}[*] Sleep complete{Colors.RESET}")
                 else:
-                    print("\033[2K", end='\r')
                     print(f"{Colors.DIM}[*] Sleeping for {sleep_time}s...{Colors.RESET}")
                     time.sleep(sleep_time)
 
@@ -2495,7 +2494,7 @@ Example: AAPL|EXIT|Stock momentum reversed, exit signal"""
                     strategy_details = self.multi_leg_manager.parse_multi_leg_strategy(
                         strategy, symbol, strikes, expiry, 0
                     )
-                    if strategy_details and strategy_details.get('legs'):
+                    if strategy_details is not None and strategy_details.get('legs') is not None:
                         for leg in strategy_details['legs']:
                             # Build OCC symbol: SYMBOL + YYMMDD + C/P + STRIKE (8 digits)
                             opt_type = 'C' if leg['type'].upper() == 'CALL' else 'P'
@@ -2503,6 +2502,8 @@ Example: AAPL|EXIT|Stock momentum reversed, exit signal"""
                             occ_symbol = f"{symbol}{exp_str}{opt_type}{strike_str}"
                             expected_occ_symbols.add(occ_symbol)
                             logging.info(f"Expected leg OCC symbol: {occ_symbol}")
+                    else:
+                        logging.warning(f"Could not parse multi-leg strategy {strategy} for {symbol} - skipping duplicate check")
                 else:
                     # For single-leg, build the single OCC symbol
                     opt_type = 'C' if 'CALL' in strategy.upper() else 'P'
