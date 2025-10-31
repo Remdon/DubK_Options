@@ -227,7 +227,10 @@ class OptionsBot:
         self.grok_logger = logging.getLogger('grok')
         self.grok_logger.setLevel(logging.DEBUG)
         # Add file handler for Grok logs
-        grok_handler = logging.FileHandler(config.LOG_FILES.get('grok', 'logs/grok_interactions.log'))
+        grok_log_path = config.LOG_FILES.get('grok', 'logs/grok_interactions.log')
+        # Ensure the log directory exists
+        os.makedirs(os.path.dirname(grok_log_path), exist_ok=True)
+        grok_handler = logging.FileHandler(grok_log_path)
         grok_handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
         self.grok_logger.addHandler(grok_handler)
         self.grok_logger.propagate = False  # Don't propagate to root logger
