@@ -147,9 +147,18 @@ class Config:
         }
 
         self.PRICE_FILTERS: Dict[str, float] = {
-            'min_price': float(os.getenv('MIN_PRICE', '0.05')),
+            'min_price': float(os.getenv('MIN_PRICE', '15.00')),  # CRITICAL: Eliminates penny stocks (was 0.05)
             'max_price': float(os.getenv('MAX_PRICE', '500.0'))
         }
+
+        # =====================================================================
+        # ALPACA RESTRICTIONS
+        # =====================================================================
+        # Symbols that Alpaca doesn't allow for multi-leg orders (penny stocks, meme stocks, etc.)
+        self.ALPACA_BLACKLIST = [
+            'BBAI',  # Penny stock - multi-leg orders not allowed
+            'BBBY', 'GME', 'AMC',  # Meme stocks - often restricted
+        ]
 
         # =====================================================================
         # AI AND ANALYSIS PARAMETERS
