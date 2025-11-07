@@ -1896,4 +1896,27 @@ class ExpertMarketScanner:
         finally:
             loop.close()
 
+    def get_filtered_universe(self) -> List[Dict]:
+        """
+        Get a filtered stock universe for Wheel Strategy.
+        Returns basic stock data without full options analysis.
+
+        Returns:
+            List of stock dicts with: symbol, price, market_cap, volume
+        """
+        logging.info("[WHEEL] Building filtered stock universe...")
+
+        # Run async universe build
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        try:
+            universe = loop.run_until_complete(self._build_stock_universe())
+            logging.info(f"[WHEEL] Built universe with {len(universe)} stocks")
+            return universe
+        except Exception as e:
+            logging.error(f"[WHEEL] Failed to build universe: {e}")
+            return []
+        finally:
+            loop.close()
+
 
