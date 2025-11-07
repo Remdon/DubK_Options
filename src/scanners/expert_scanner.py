@@ -1896,27 +1896,126 @@ class ExpertMarketScanner:
         finally:
             loop.close()
 
+    def _calculate_current_iv(self, options_chain: List[Dict], stock_price: float) -> float:
+        """
+        Calculate current implied volatility from ATM options in the chain.
+
+        Args:
+            options_chain: List of option contracts
+            stock_price: Current stock price
+
+        Returns:
+            Average IV from ATM options, or 0 if no valid data
+        """
+        if not options_chain or not stock_price or stock_price <= 0:
+            return 0.0
+
+        import statistics
+
+        # Find ATM options (strike within 5% of stock price)
+        atm_options = [
+            opt for opt in options_chain
+            if opt.get('implied_volatility', 0) > 0 and
+               opt.get('strike', 0) > 0 and
+               0.95 <= opt.get('strike', 0) / stock_price <= 1.05
+        ]
+
+        if not atm_options:
+            # Fallback: Use first 20 options with valid IV
+            atm_options = [
+                opt for opt in options_chain[:20]
+                if opt.get('implied_volatility', 0) > 0
+            ]
+
+        if atm_options:
+            ivs = [opt['implied_volatility'] for opt in atm_options]
+            return statistics.mean(ivs)
+
+        return 0.0
+
     def get_filtered_universe(self) -> List[Dict]:
         """
         Get a filtered stock universe for Wheel Strategy.
-        Returns basic stock data without full options analysis.
+        Returns enriched stock data with IV rank, market cap, and beta.
 
         Returns:
-            List of stock dicts with: symbol, price, market_cap, volume
+            List of stock dicts with: symbol, price, iv_rank, market_cap, beta, volume
         """
         logging.info("[WHEEL] Building filtered stock universe...")
 
-        # Run async universe build
+        # Run async universe build to get base stocks
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
         try:
             universe = loop.run_until_complete(self._build_stock_universe())
-            logging.info(f"[WHEEL] Built universe with {len(universe)} stocks")
-            return universe
+            logging.info(f"[WHEEL] Built base universe with {len(universe)} stocks")
         except Exception as e:
-            logging.error(f"[WHEEL] Failed to build universe: {e}")
+            logging.error(f"[WHEEL] Failed to build base universe: {e}")
             return []
         finally:
             loop.close()
+
+        # Enrich universe with IV rank, market cap, and beta
+        enriched_universe = []
+        for stock in universe:
+            symbol = stock.get('symbol')
+            if not symbol:
+                continue
+
+            try:
+                # Get current price (may not be in universe data)
+                if 'price' not in stock or not stock['price']:
+                    quote_data = self.openbb.get_quote(symbol)
+                    if quote_data and 'results' in quote_data:
+                        results = quote_data['results']
+                        if isinstance(results, list) and len(results) > 0:
+                            stock['price'] = results[0].get('last_price') or results[0].get('close')
+                        elif isinstance(results, dict):
+                            stock['price'] = results.get('last_price') or results.get('close')
+
+                # Get IV rank from options chain
+                options_chain_data = self.openbb.get_options_chains(symbol)
+                if options_chain_data and 'results' in options_chain_data:
+                    options_chain = options_chain_data['results']
+
+                    # Calculate current IV from ATM options
+                    current_iv = self._calculate_current_iv(options_chain, stock.get('price', 0))
+
+                    if current_iv and current_iv > 0:
+                        # Calculate IV metrics (IV rank)
+                        iv_metrics = self.iv_analyzer.calculate_iv_metrics(symbol, current_iv, options_chain)
+                        stock['iv_rank'] = iv_metrics.get('iv_rank', 0)
+                        stock['iv_percentile'] = iv_metrics.get('iv_percentile', 0)
+                        stock['current_iv'] = current_iv
+                    else:
+                        stock['iv_rank'] = 0
+                        stock['iv_percentile'] = 0
+                else:
+                    stock['iv_rank'] = 0
+                    stock['iv_percentile'] = 0
+
+                # Get market cap and beta from equity profile
+                profile_data = self.openbb.get_equity_profile(symbol)
+                if profile_data and 'results' in profile_data:
+                    profile = profile_data['results']
+                    if isinstance(profile, list) and len(profile) > 0:
+                        profile = profile[0]
+
+                    stock['market_cap'] = profile.get('market_cap') or profile.get('marketCap', 0)
+                    stock['beta'] = profile.get('beta', 1.0)
+                    stock['sector'] = profile.get('sector', 'Unknown')
+                else:
+                    stock['market_cap'] = 0
+                    stock['beta'] = 1.0
+                    stock['sector'] = 'Unknown'
+
+                enriched_universe.append(stock)
+
+            except Exception as e:
+                logging.debug(f"[WHEEL] Could not enrich {symbol}: {e}")
+                continue
+
+        logging.info(f"[WHEEL] Enriched {len(enriched_universe)}/{len(universe)} stocks with IV rank and market cap")
+        return enriched_universe
 
 
