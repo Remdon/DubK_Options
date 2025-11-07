@@ -1956,7 +1956,11 @@ class ExpertMarketScanner:
             loop.close()
 
         # Enrich universe with IV rank, market cap, and beta
+        # But apply basic price filter first to reduce API calls
         enriched_universe = []
+        processed = 0
+        skipped_price = 0
+
         for stock in universe:
             symbol = stock.get('symbol')
             if not symbol:
@@ -1972,6 +1976,18 @@ class ExpertMarketScanner:
                             stock['price'] = results[0].get('last_price') or results[0].get('close')
                         elif isinstance(results, dict):
                             stock['price'] = results.get('last_price') or results.get('close')
+
+                # Quick price filter before expensive API calls (from config defaults: $20-$150)
+                price = stock.get('price', 0)
+                if not price or price < 15 or price > 200:  # Slightly wider than Wheel limits
+                    skipped_price += 1
+                    continue
+
+                processed += 1
+
+                # Progress logging for long-running scans
+                if processed % 10 == 0:
+                    logging.info(f"[WHEEL] Enriching stock {processed}/{len(universe)} ({symbol})...")
 
                 # Get IV rank from options chain
                 options_chain_data = self.openbb.get_options_chains(symbol)
@@ -2015,7 +2031,7 @@ class ExpertMarketScanner:
                 logging.debug(f"[WHEEL] Could not enrich {symbol}: {e}")
                 continue
 
-        logging.info(f"[WHEEL] Enriched {len(enriched_universe)}/{len(universe)} stocks with IV rank and market cap")
+        logging.info(f"[WHEEL] Enriched {len(enriched_universe)} stocks (processed {processed}, skipped {skipped_price} by price)")
         return enriched_universe
 
 
