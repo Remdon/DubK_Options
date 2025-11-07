@@ -234,32 +234,62 @@ class WheelStrategy:
         try:
             # Get current stock price
             stock_data = self.openbb_client.get_quote(symbol)
-            if not stock_data:
-                logging.error(f"[WHEEL] {symbol}: Failed to get stock price")
+            if not stock_data or 'results' not in stock_data:
+                logging.error(f"[WHEEL] {symbol}: Failed to get stock quote")
                 return None
 
-            price = stock_data.get('price') or stock_data.get('last')
-            if not price:
-                logging.error(f"[WHEEL] {symbol}: No price in stock data")
+            # Extract price from results
+            results = stock_data['results']
+            if isinstance(results, list) and len(results) > 0:
+                price = results[0].get('last_price') or results[0].get('close')
+            elif isinstance(results, dict):
+                price = results.get('last_price') or results.get('close')
+            else:
+                price = None
+
+            if not price or price <= 0:
+                logging.error(f"[WHEEL] {symbol}: No valid price in quote data")
                 return None
 
             # Calculate target strike (10% OTM)
             target_strike = round(price * self.PUT_OTM_PERCENT, 2)
 
             # Get options chain
-            chain = self.openbb_client.get_options_chain(symbol)
-            if not chain or 'puts' not in chain:
+            chain_data = self.openbb_client.get_options_chains(symbol)
+            if not chain_data or 'results' not in chain_data:
                 logging.error(f"[WHEEL] {symbol}: No options chain available")
                 return None
 
-            puts = chain['puts']
+            # Filter for puts only
+            all_options = chain_data['results']
+            puts = [opt for opt in all_options if opt.get('option_type') == 'put']
+
+            if not puts:
+                logging.error(f"[WHEEL] {symbol}: No put options in chain")
+                return None
 
             # Filter for target DTE range and strike
             best_put = None
             best_score = 0
 
+            from datetime import datetime
+
             for put in puts:
-                dte = put.get('dte', 0)
+                # Calculate DTE from expiration date
+                expiration = put.get('expiration')
+                if expiration:
+                    try:
+                        # Parse expiration date (usually ISO format: YYYY-MM-DD)
+                        if isinstance(expiration, str):
+                            exp_date = datetime.fromisoformat(expiration.replace('Z', ''))
+                        else:
+                            exp_date = expiration
+                        dte = (exp_date - datetime.now()).days
+                    except:
+                        dte = put.get('dte', 0)
+                else:
+                    dte = put.get('dte', 0)
+
                 strike = put.get('strike', 0)
                 premium = put.get('bid', 0) or put.get('mark', 0)
 
@@ -298,7 +328,8 @@ class WheelStrategy:
                 logging.info(f"[WHEEL] {symbol}: Found put to sell - ${best_put['strike']:.2f} "
                            f"strike, ${best_put['premium']:.2f} premium, {best_put['dte']} DTE")
             else:
-                logging.warning(f"[WHEEL] {symbol}: No suitable puts found in {self.MIN_DTE}-{self.MAX_DTE} DTE range")
+                logging.warning(f"[WHEEL] {symbol}: No suitable puts found in {self.MIN_DTE}-{self.MAX_DTE} DTE range "
+                              f"(target strike: ${target_strike:.2f}, checked {len(puts)} puts)")
 
             return best_put
 
