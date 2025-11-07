@@ -1,0 +1,470 @@
+"""
+The Wheel Strategy - Systematic Premium Collection
+
+The Wheel is one of the most profitable options strategies with 50-95% win rates.
+It consists of three phases that cycle continuously:
+
+PHASE 1: SELLING_PUTS
+- Sell cash-secured puts at 5-10% OTM
+- Collect premium (keep if expires worthless)
+- If assigned, move to PHASE 2
+
+PHASE 2: ASSIGNED (Own Stock)
+- Stock assigned at put strike (bought at discount)
+- Immediately move to PHASE 3
+
+PHASE 3: SELLING_CALLS
+- Sell covered calls above cost basis
+- Collect premium (keep if expires worthless)
+- If assigned (stock called away), return to PHASE 1
+- If expires worthless, repeat PHASE 3
+
+Expected Returns: 15-40% annually
+Win Rate: 50-95% (most puts expire worthless)
+Risk: Lower than naked options, similar to stock ownership
+"""
+
+import logging
+from typing import List, Dict, Optional, Tuple
+from datetime import datetime, timedelta
+from colorama import Fore, Style
+
+
+class WheelStrategy:
+    """
+    Implements The Wheel Strategy for systematic premium collection.
+
+    Key Features:
+    - Identifies wheel candidates (quality stocks with high IV)
+    - Manages wheel state transitions (SELLING_PUTS → ASSIGNED → SELLING_CALLS)
+    - Calculates optimal strikes and position sizing
+    - Tracks total premium collected across full wheel cycles
+    """
+
+    def __init__(self, trading_client, openbb_client, scanner, config):
+        """
+        Initialize Wheel Strategy
+
+        Args:
+            trading_client: Alpaca trading client
+            openbb_client: OpenBB client for market data
+            scanner: Market scanner for finding candidates
+            config: Bot configuration
+        """
+        self.trading_client = trading_client
+        self.openbb_client = openbb_client
+        self.scanner = scanner
+        self.config = config
+        self.wheel_db = None  # Will be set by WheelManager
+
+        # Load all parameters from config
+        self.MIN_STOCK_PRICE = config.WHEEL_MIN_STOCK_PRICE
+        self.MAX_STOCK_PRICE = config.WHEEL_MAX_STOCK_PRICE
+        self.MIN_IV_RANK = config.WHEEL_MIN_IV_RANK
+        self.MAX_IV_RANK = config.WHEEL_MAX_IV_RANK
+        self.MIN_MARKET_CAP = config.WHEEL_MIN_MARKET_CAP
+
+        # Optional beta filters (not in config yet, use defaults)
+        self.MIN_BETA = 0.8  # Not too defensive
+        self.MAX_BETA = 1.3  # Not too volatile
+        self.MIN_ANNUAL_RETURN = 0.20  # 20% target annual return
+
+        # Wheel parameters from config
+        self.PUT_OTM_PERCENT = config.WHEEL_PUT_OTM_PERCENT
+        self.CALL_ABOVE_BASIS_PERCENT = config.WHEEL_CALL_ABOVE_BASIS_PERCENT
+        self.TARGET_DTE = config.WHEEL_TARGET_DTE
+        self.MIN_DTE = config.WHEEL_MIN_DTE
+        self.MAX_DTE = config.WHEEL_MAX_DTE
+
+        # Position sizing from config
+        self.MAX_WHEEL_POSITIONS = config.MAX_WHEEL_POSITIONS
+        self.MAX_CAPITAL_PER_WHEEL = config.MAX_CAPITAL_PER_WHEEL
+
+        logging.info(f"[WHEEL] Initialized with criteria: ${self.MIN_STOCK_PRICE}-${self.MAX_STOCK_PRICE}, "
+                    f"IV rank {self.MIN_IV_RANK}-{self.MAX_IV_RANK}%, Beta {self.MIN_BETA}-{self.MAX_BETA}")
+
+    def find_wheel_candidates(self, max_candidates: int = 5) -> List[Dict]:
+        """
+        Find top wheel candidates based on criteria and expected returns.
+
+        Returns:
+            List of candidate dicts sorted by expected annual return:
+            {
+                'symbol': str,
+                'stock_price': float,
+                'iv_rank': float,
+                'beta': float,
+                'market_cap': float,
+                'put_strike': float,
+                'put_premium': float,
+                'annual_return': float,
+                'reason': str
+            }
+        """
+        logging.info(f"[WHEEL] Searching for wheel candidates...")
+        candidates = []
+
+        # Get universe from scanner
+        try:
+            universe = self.scanner.get_filtered_universe()
+            logging.info(f"[WHEEL] Scanning {len(universe)} stocks for wheel opportunities")
+        except Exception as e:
+            logging.error(f"[WHEEL] Failed to get universe: {e}")
+            return []
+
+        for stock in universe:
+            symbol = stock.get('symbol')
+            if not symbol:
+                continue
+
+            # Apply wheel candidate criteria
+            is_candidate, reason, details = self._evaluate_wheel_candidate(stock)
+
+            if is_candidate:
+                candidates.append(details)
+                logging.info(f"[WHEEL] {symbol}: {reason} - {details['annual_return']:.1%} annual return")
+            else:
+                logging.debug(f"[WHEEL] {symbol} rejected: {reason}")
+
+        # Sort by expected annual return (highest first)
+        candidates = sorted(candidates, key=lambda x: x['annual_return'], reverse=True)
+
+        if candidates:
+            logging.info(f"[WHEEL] Found {len(candidates)} wheel candidates, returning top {max_candidates}")
+            for i, c in enumerate(candidates[:max_candidates], 1):
+                logging.info(f"[WHEEL]   {i}. {c['symbol']}: {c['annual_return']:.1%} annual "
+                           f"(put ${c['put_strike']:.2f} for ${c['put_premium']:.2f})")
+        else:
+            logging.warning(f"[WHEEL] No wheel candidates found matching criteria")
+
+        return candidates[:max_candidates]
+
+    def _evaluate_wheel_candidate(self, stock: Dict) -> Tuple[bool, str, Optional[Dict]]:
+        """
+        Evaluate if a stock meets wheel criteria.
+
+        Returns:
+            (is_candidate, reason, candidate_details or None)
+        """
+        symbol = stock.get('symbol', 'UNKNOWN')
+        price = stock.get('price', 0) or stock.get('last_price', 0)
+
+        # Check price range
+        if not price or price < self.MIN_STOCK_PRICE:
+            return False, f"Price ${price:.2f} below minimum ${self.MIN_STOCK_PRICE}", None
+        if price > self.MAX_STOCK_PRICE:
+            return False, f"Price ${price:.2f} above maximum ${self.MAX_STOCK_PRICE}", None
+
+        # Check IV rank
+        iv_rank = stock.get('iv_rank', 0) or stock.get('iv_percentile', 0)
+        if iv_rank < self.MIN_IV_RANK:
+            return False, f"IV rank {iv_rank:.1f}% below minimum {self.MIN_IV_RANK}%", None
+
+        # Check market cap
+        market_cap = stock.get('market_cap', 0)
+        if market_cap and market_cap < self.MIN_MARKET_CAP:
+            return False, f"Market cap ${market_cap/1e9:.1f}B below minimum ${self.MIN_MARKET_CAP/1e9:.1f}B", None
+
+        # Check beta (if available)
+        beta = stock.get('beta')
+        if beta is not None:
+            if beta < self.MIN_BETA or beta > self.MAX_BETA:
+                return False, f"Beta {beta:.2f} outside range {self.MIN_BETA}-{self.MAX_BETA}", None
+
+        # Calculate optimal put strike and expected premium
+        put_strike = round(price * self.PUT_OTM_PERCENT, 2)
+
+        # Estimate put premium (will be refined with actual options chain)
+        # Rule of thumb: ~1-3% of strike price for 30-45 DTE at high IV
+        # Conservative estimate: 1.5% for IV rank 60%, 2.5% for IV rank 80%, 3.5% for IV rank 100%
+        premium_rate = 0.01 + (iv_rank / 100) * 0.025  # Linear interpolation
+        put_premium = put_strike * premium_rate
+
+        # Calculate annualized return
+        # Return = (premium / capital_required) * (365 / DTE)
+        capital_required = put_strike * 100  # Cash secured for 1 contract
+        return_per_cycle = put_premium * 100 / capital_required
+        cycles_per_year = 365 / self.TARGET_DTE
+        annual_return = return_per_cycle * cycles_per_year
+
+        # Check minimum return threshold
+        if annual_return < self.MIN_ANNUAL_RETURN:
+            return False, f"Annual return {annual_return:.1%} below minimum {self.MIN_ANNUAL_RETURN:.0%}", None
+
+        # Build candidate details
+        candidate = {
+            'symbol': symbol,
+            'stock_price': price,
+            'iv_rank': iv_rank,
+            'beta': beta if beta is not None else 1.0,
+            'market_cap': market_cap,
+            'put_strike': put_strike,
+            'put_premium': put_premium,
+            'annual_return': annual_return,
+            'capital_required': capital_required,
+            'dte': self.TARGET_DTE,
+            'reason': f"Wheel candidate: {annual_return:.1%} annual return (IV rank {iv_rank:.0f}%)"
+        }
+
+        return True, f"Qualified wheel candidate", candidate
+
+    def get_put_to_sell(self, symbol: str, target_dte: Optional[int] = None) -> Optional[Dict]:
+        """
+        Find the optimal cash-secured put to sell for a given symbol.
+
+        Args:
+            symbol: Stock symbol
+            target_dte: Target days to expiration (default: self.TARGET_DTE)
+
+        Returns:
+            Dict with put details or None if no suitable put found:
+            {
+                'symbol': str,
+                'strike': float,
+                'expiration': str,
+                'dte': int,
+                'premium': float,
+                'delta': float,
+                'option_symbol': str
+            }
+        """
+        if target_dte is None:
+            target_dte = self.TARGET_DTE
+
+        try:
+            # Get current stock price
+            stock_data = self.openbb_client.get_quote(symbol)
+            if not stock_data:
+                logging.error(f"[WHEEL] {symbol}: Failed to get stock price")
+                return None
+
+            price = stock_data.get('price') or stock_data.get('last')
+            if not price:
+                logging.error(f"[WHEEL] {symbol}: No price in stock data")
+                return None
+
+            # Calculate target strike (10% OTM)
+            target_strike = round(price * self.PUT_OTM_PERCENT, 2)
+
+            # Get options chain
+            chain = self.openbb_client.get_options_chain(symbol)
+            if not chain or 'puts' not in chain:
+                logging.error(f"[WHEEL] {symbol}: No options chain available")
+                return None
+
+            puts = chain['puts']
+
+            # Filter for target DTE range and strike
+            best_put = None
+            best_score = 0
+
+            for put in puts:
+                dte = put.get('dte', 0)
+                strike = put.get('strike', 0)
+                premium = put.get('bid', 0) or put.get('mark', 0)
+
+                # Check DTE range
+                if dte < self.MIN_DTE or dte > self.MAX_DTE:
+                    continue
+
+                # Check strike is near target (within 5%)
+                if abs(strike - target_strike) / target_strike > 0.05:
+                    continue
+
+                # Check premium is reasonable (> $0.10)
+                if premium < 0.10:
+                    continue
+
+                # Score: prefer closer to target DTE and higher premium
+                dte_score = 1.0 - abs(dte - target_dte) / self.MAX_DTE
+                premium_score = premium / (strike * 0.05)  # Normalize by ~5% of strike
+                score = dte_score * 0.4 + premium_score * 0.6
+
+                if score > best_score:
+                    best_score = score
+                    best_put = {
+                        'symbol': symbol,
+                        'strike': strike,
+                        'expiration': put.get('expiration'),
+                        'dte': dte,
+                        'premium': premium,
+                        'delta': put.get('delta', 0),
+                        'volume': put.get('volume', 0),
+                        'open_interest': put.get('open_interest', 0),
+                        'option_symbol': put.get('contract_symbol') or put.get('symbol')
+                    }
+
+            if best_put:
+                logging.info(f"[WHEEL] {symbol}: Found put to sell - ${best_put['strike']:.2f} "
+                           f"strike, ${best_put['premium']:.2f} premium, {best_put['dte']} DTE")
+            else:
+                logging.warning(f"[WHEEL] {symbol}: No suitable puts found in {self.MIN_DTE}-{self.MAX_DTE} DTE range")
+
+            return best_put
+
+        except Exception as e:
+            logging.error(f"[WHEEL] {symbol}: Error finding put to sell: {e}")
+            return None
+
+    def get_call_to_sell(self, symbol: str, cost_basis: float, shares: int,
+                        target_dte: Optional[int] = None) -> Optional[Dict]:
+        """
+        Find the optimal covered call to sell for stock we own.
+
+        Args:
+            symbol: Stock symbol
+            cost_basis: Our average cost per share
+            shares: Number of shares owned (must be multiple of 100)
+            target_dte: Target days to expiration (default: self.TARGET_DTE)
+
+        Returns:
+            Dict with call details or None if no suitable call found:
+            {
+                'symbol': str,
+                'strike': float,
+                'expiration': str,
+                'dte': int,
+                'premium': float,
+                'delta': float,
+                'option_symbol': str,
+                'contracts': int  # How many contracts to sell
+            }
+        """
+        if target_dte is None:
+            target_dte = self.TARGET_DTE
+
+        if shares < 100 or shares % 100 != 0:
+            logging.error(f"[WHEEL] {symbol}: Invalid share count {shares} (must be multiple of 100)")
+            return None
+
+        contracts = shares // 100
+
+        try:
+            # Get current stock price
+            stock_data = self.openbb_client.get_quote(symbol)
+            if not stock_data:
+                logging.error(f"[WHEEL] {symbol}: Failed to get stock price")
+                return None
+
+            current_price = stock_data.get('price') or stock_data.get('last')
+            if not current_price:
+                logging.error(f"[WHEEL] {symbol}: No price in stock data")
+                return None
+
+            # Calculate minimum strike (5% above cost basis to ensure profit)
+            min_strike = cost_basis * self.CALL_ABOVE_BASIS_PERCENT
+
+            # If current price is below cost basis, adjust strategy
+            if current_price < cost_basis:
+                logging.warning(f"[WHEEL] {symbol}: Stock at ${current_price:.2f} below cost basis ${cost_basis:.2f}")
+                # Sell call at or slightly above current price to collect premium
+                target_strike = round(current_price * 1.02, 2)  # 2% OTM
+            else:
+                target_strike = round(max(min_strike, current_price * 1.03), 2)  # 3% OTM or above basis
+
+            # Get options chain
+            chain = self.openbb_client.get_options_chain(symbol)
+            if not chain or 'calls' not in chain:
+                logging.error(f"[WHEEL] {symbol}: No options chain available")
+                return None
+
+            calls = chain['calls']
+
+            # Filter for target DTE range and strike
+            best_call = None
+            best_score = 0
+
+            for call in calls:
+                dte = call.get('dte', 0)
+                strike = call.get('strike', 0)
+                premium = call.get('bid', 0) or call.get('mark', 0)
+
+                # Check DTE range
+                if dte < self.MIN_DTE or dte > self.MAX_DTE:
+                    continue
+
+                # Check strike is above minimum
+                if strike < min_strike:
+                    continue
+
+                # Check strike is within 10% of target
+                if abs(strike - target_strike) / target_strike > 0.10:
+                    continue
+
+                # Check premium is reasonable (> $0.10)
+                if premium < 0.10:
+                    continue
+
+                # Score: prefer closer to target DTE and higher premium
+                dte_score = 1.0 - abs(dte - target_dte) / self.MAX_DTE
+                premium_score = premium / (strike * 0.03)  # Normalize by ~3% of strike
+                score = dte_score * 0.4 + premium_score * 0.6
+
+                if score > best_score:
+                    best_score = score
+                    best_call = {
+                        'symbol': symbol,
+                        'strike': strike,
+                        'expiration': call.get('expiration'),
+                        'dte': dte,
+                        'premium': premium,
+                        'delta': call.get('delta', 0),
+                        'volume': call.get('volume', 0),
+                        'open_interest': call.get('open_interest', 0),
+                        'option_symbol': call.get('contract_symbol') or call.get('symbol'),
+                        'contracts': contracts
+                    }
+
+            if best_call:
+                total_premium = best_call['premium'] * 100 * contracts
+                logging.info(f"[WHEEL] {symbol}: Found call to sell - ${best_call['strike']:.2f} strike, "
+                           f"${best_call['premium']:.2f} premium (${total_premium:.2f} total), {best_call['dte']} DTE")
+            else:
+                logging.warning(f"[WHEEL] {symbol}: No suitable calls found above ${min_strike:.2f} "
+                              f"in {self.MIN_DTE}-{self.MAX_DTE} DTE range")
+
+            return best_call
+
+        except Exception as e:
+            logging.error(f"[WHEEL] {symbol}: Error finding call to sell: {e}")
+            return None
+
+    def calculate_position_size(self, symbol: str, put_strike: float, account_value: float,
+                               existing_wheel_positions: int) -> int:
+        """
+        Calculate how many put contracts to sell based on capital and limits.
+
+        Args:
+            symbol: Stock symbol
+            put_strike: Put strike price
+            account_value: Total account value
+            existing_wheel_positions: Number of existing wheel positions
+
+        Returns:
+            Number of contracts to sell (0 if position limit reached)
+        """
+        # Check position limit
+        if existing_wheel_positions >= self.MAX_WHEEL_POSITIONS:
+            logging.warning(f"[WHEEL] {symbol}: Maximum wheel positions ({self.MAX_WHEEL_POSITIONS}) reached")
+            return 0
+
+        # Calculate max capital for this position
+        max_capital = account_value * self.MAX_CAPITAL_PER_WHEEL
+
+        # Each contract requires cash securing 100 shares at strike price
+        capital_per_contract = put_strike * 100
+
+        # Calculate max contracts
+        max_contracts = int(max_capital / capital_per_contract)
+
+        # Start conservative: 1 contract per position
+        contracts = min(1, max_contracts)
+
+        if contracts == 0:
+            logging.warning(f"[WHEEL] {symbol}: Insufficient capital for wheel position "
+                          f"(need ${capital_per_contract:.2f}, have ${max_capital:.2f})")
+        else:
+            logging.info(f"[WHEEL] {symbol}: Position size {contracts} contract(s) "
+                       f"(${capital_per_contract * contracts:.2f} capital required)")
+
+        return contracts

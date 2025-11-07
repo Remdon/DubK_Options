@@ -48,34 +48,36 @@ class Config:
         self.MAX_PORTFOLIO_THETA = float(os.getenv('MAX_PORTFOLIO_THETA', '-500'))
 
         # =====================================================================
-        # STRATEGY-SPECIFIC STOP LOSSES
+        # WHEEL STRATEGY CONFIGURATION
         # =====================================================================
-        # NOTE: These config values are currently NOT USED by position_manager.py
-        # position_manager.py has hardcoded values. This config is kept for future
-        # centralized configuration migration.
-        # TIER 1 EXPERT TRADER RULES: -75% stop loss for spreads (prevents premature exits)
-        self.STOP_LOSSES: Dict[str, float] = {
-            'LONG_CALL': float(os.getenv('LONG_CALL_STOP_LOSS', '-0.25')),
-            'LONG_PUT': float(os.getenv('LONG_PUT_STOP_LOSS', '-0.25')),
-            'SHORT_CALL': float(os.getenv('SHORT_CALL_STOP_LOSS', '-0.50')),
-            'SHORT_PUT': float(os.getenv('SHORT_PUT_STOP_LOSS', '-0.50')),
-            'BULL_CALL_SPREAD': float(os.getenv('BULL_CALL_SPREAD_STOP_LOSS', '-0.75')),  # TIER 1: Updated to -75%
-            'BEAR_PUT_SPREAD': float(os.getenv('BEAR_PUT_SPREAD_STOP_LOSS', '-0.75')),   # TIER 1: Updated to -75%
-            'BULL_PUT_SPREAD': float(os.getenv('BULL_PUT_SPREAD_STOP_LOSS', '-0.75')),   # TIER 1: Updated to -75%
-            'BEAR_CALL_SPREAD': float(os.getenv('BEAR_CALL_SPREAD_STOP_LOSS', '-0.75')), # TIER 1: Updated to -75%
-            'IRON_CONDOR': float(os.getenv('IRON_CONDOR_STOP_LOSS', '-0.50')),
-            'IRON_BUTTERFLY': float(os.getenv('IRON_BUTTERFLY_STOP_LOSS', '-0.50')),
-            'LONG_STRADDLE': float(os.getenv('LONG_STRADDLE_STOP_LOSS', '-0.30')),
-            'LONG_STRANGLE': float(os.getenv('LONG_STRANGLE_STOP_LOSS', '-0.30')),
-            'STRADDLE': float(os.getenv('STRADDLE_STOP_LOSS', '-0.30')),
-            'STRANGLE': float(os.getenv('STRANGLE_STOP_LOSS', '-0.30')),
-            'SHORT_STRADDLE': float(os.getenv('SHORT_STRADDLE_STOP_LOSS', '-0.40')),
-            'SHORT_STRANGLE': float(os.getenv('SHORT_STRANGLE_STOP_LOSS', '-0.40')),
-            'BUTTERFLY_SPREAD': float(os.getenv('BUTTERFLY_SPREAD_STOP_LOSS', '-0.35')),
-            'COVERED_CALL': float(os.getenv('COVERED_CALL_STOP_LOSS', '-0.15')),
-            'PROTECTIVE_PUT': float(os.getenv('PROTECTIVE_PUT_STOP_LOSS', '-0.20')),
-            'COLLAR': float(os.getenv('COLLAR_STOP_LOSS', '-0.20')),
-        }
+        # SIMPLIFIED: Bot now ONLY uses Wheel Strategy for consistent premium collection
+        # Wheel has 50-95% win rate vs 25% for directional spreads
+
+        # Wheel IV requirements
+        self.WHEEL_MIN_IV_RANK = float(os.getenv('WHEEL_MIN_IV_RANK', '60'))  # Only sell when IV is elevated
+        self.WHEEL_MAX_IV_RANK = float(os.getenv('WHEEL_MAX_IV_RANK', '100'))  # Can sell at any high IV
+
+        # Wheel stock quality filters
+        self.WHEEL_MIN_STOCK_PRICE = float(os.getenv('WHEEL_MIN_STOCK_PRICE', '20.00'))  # Affordable for assignment
+        self.WHEEL_MAX_STOCK_PRICE = float(os.getenv('WHEEL_MAX_STOCK_PRICE', '150.00'))  # Not too capital intensive
+        self.WHEEL_MIN_MARKET_CAP = float(os.getenv('WHEEL_MIN_MARKET_CAP', '2000000000'))  # $2B minimum
+
+        # Wheel position limits
+        self.MAX_WHEEL_POSITIONS = int(os.getenv('MAX_WHEEL_POSITIONS', '5'))  # Max 5 wheel positions
+        self.MAX_CAPITAL_PER_WHEEL = float(os.getenv('MAX_CAPITAL_PER_WHEEL', '0.20'))  # 20% per wheel
+
+        # Wheel DTE parameters
+        self.WHEEL_TARGET_DTE = int(os.getenv('WHEEL_TARGET_DTE', '35'))  # 30-45 days optimal
+        self.WHEEL_MIN_DTE = int(os.getenv('WHEEL_MIN_DTE', '25'))
+        self.WHEEL_MAX_DTE = int(os.getenv('WHEEL_MAX_DTE', '45'))
+
+        # Wheel strike selection
+        self.WHEEL_PUT_OTM_PERCENT = float(os.getenv('WHEEL_PUT_OTM_PERCENT', '0.90'))  # Sell puts 10% OTM
+        self.WHEEL_CALL_ABOVE_BASIS_PERCENT = float(os.getenv('WHEEL_CALL_ABOVE_BASIS_PERCENT', '1.05'))  # Sell calls 5% above cost
+
+        # Wheel exit rules (for short options)
+        self.WHEEL_PROFIT_TARGET_PCT = float(os.getenv('WHEEL_PROFIT_TARGET_PCT', '0.50'))  # Close at 50% profit
+        self.WHEEL_STOP_LOSS_PCT = float(os.getenv('WHEEL_STOP_LOSS_PCT', '-2.00'))  # Stop at -200% (let assignment happen)
 
         # =====================================================================
         # STRATEGY-SPECIFIC EXPIRATION EXITS

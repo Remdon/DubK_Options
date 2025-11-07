@@ -45,7 +45,8 @@ from src.core.colors import Colors
 from src.risk import PortfolioManager, PositionManager
 from src.strategies import (
     OptionsValidator, MultiLegOptionsManager,
-    MultiLegOrderManager, MultiLegOrderTracker
+    MultiLegOrderManager, MultiLegOrderTracker,
+    WheelStrategy, WheelManager, WheelState
 )
 from src.order_management import ReplacementAnalyzer, BatchOrderManager
 from src.utils.validators import (
@@ -224,6 +225,17 @@ class OptionsBot:
 
         # PHASE 3: Initialize batch operations manager
         self.batch_manager = BatchOrderManager(self.trading_client, self.multi_leg_tracker, self.alert_manager)
+
+        # WHEEL STRATEGY: Initialize The Wheel for systematic premium collection
+        self.wheel_manager = WheelManager(db_path=config.DB_PATH)
+        self.wheel_strategy = WheelStrategy(
+            trading_client=self.trading_client,
+            openbb_client=self.openbb,
+            scanner=self.market_scanner,
+            config=config
+        )
+        self.wheel_strategy.wheel_db = self.wheel_manager  # Link database manager
+        logging.info(f"[WHEEL] The Wheel Strategy initialized - 50-95% win rate expected")
 
         # Initialize Grok logger for detailed AI analysis logging
         self.grok_logger = logging.getLogger('grok')
@@ -1934,16 +1946,13 @@ Provide ONLY the formatted lines, one per symbol. No other text."""
                     else:
                         print(f"\n{Colors.SUCCESS}[MARKET OPEN]{Colors.RESET}")
 
-                    # FIRST: 5-min Grok position monitoring for exit strategy re-evaluation
-                    self.check_positions_with_grok()
-
-                    # SECOND: Check and manage existing positions with exit rules
+                    # FIRST: Check and manage existing positions with exit rules
                     self.position_manager.check_and_execute_exits()
 
-                    # THIRD: Display portfolio strategy summary
+                    # SECOND: Display portfolio strategy summary
                     self.display_portfolio_strategy_summary()
 
-                    # FOURTH: Look for new opportunities with 30-min scheduled scans
+                    # THIRD: Look for new Wheel opportunities with 30-min scheduled scans
                     self.execute_market_session(iteration)
 
                     sleep_time = 300  # 5 minutes between position checks
@@ -2020,13 +2029,23 @@ Provide ONLY the formatted lines, one per symbol. No other text."""
             sys.exit(0)
 
     def execute_pre_market_scan(self):
-        """Scan for opportunities when market is closed"""
+        """Scan for Wheel opportunities when market is closed"""
         next_open = self.market_calendar.get_next_market_open()
         time_until = self.market_calendar.seconds_until_market_open()
 
         print(f"Next Market Open: {next_open.strftime('%Y-%m-%d %H:%M %Z')}")
         print(f"Time Until Open: {time_until // 3600}h {(time_until % 3600) // 60}m\n")
 
+        # SIMPLIFIED: Pre-market scan now only looks for Wheel opportunities
+        print(f"{Colors.INFO}[PRE-MARKET] Scanning for Wheel Strategy opportunities...{Colors.RESET}")
+
+        # Execute Wheel scan
+        self.execute_wheel_opportunities()
+
+        return  # Skip all Grok analysis
+
+        # OLD CODE BELOW - KEPT FOR REFERENCE BUT NOT EXECUTED
+        # ========================================================
         # Expert market scan
         top_candidates = self.market_scanner.scan_market_for_opportunities()
 
@@ -2280,92 +2299,28 @@ Example: AAPL|EXIT|Stock momentum reversed, exit signal"""
         except Exception as e:
             logging.debug(f"Could not log session state: {e}")
 
-        # Execute pre-market opportunities first (if any)
-        if self.pre_market_opportunities:
-            print(f"{Colors.SUCCESS}🚀 Executing {len(self.pre_market_opportunities)} pre-market opportunities...{Colors.RESET}\n")
+        # ==========================================================================
+        # SIMPLIFIED BOT: WHEEL STRATEGY ONLY
+        # ==========================================================================
+        # Removed all Grok analysis and directional spread strategies
+        # Bot now ONLY uses Wheel Strategy for consistent premium collection
+        # Expected win rate: 50-95% (vs 25% for old approach)
+        # ==========================================================================
 
-            opps_to_execute = list(self.pre_market_opportunities)
-            self.pre_market_opportunities.clear()
-
-            for opp in opps_to_execute:
-                self.evaluate_and_execute_trade(
-                    opp['symbol'],
-                    opp,
-                    opp['options_data'],
-                    opp['analysis']
-                )
-
-        # 30-MINUTE SCHEDULED MARKET SCAN + GROK ANALYSIS
-        should_full_scan = (
+        # 30-MINUTE SCHEDULED WHEEL SCAN
+        should_wheel_scan = (
             self.last_grok_analysis_time is None or
             (now - self.last_grok_analysis_time).total_seconds() >= 1800  # 30 minutes
         )
 
-        if should_full_scan:
-            print(f"{Colors.HEADER}[30-MIN SCAN] Market scan + Grok analysis...{Colors.RESET}")
-            logging.info(f"=== 30-MINUTE SCHEDULED SCAN ===")
+        if should_wheel_scan:
+            print(f"{Colors.HEADER}[30-MIN SCAN] Wheel Strategy Scan...{Colors.RESET}")
+            logging.info(f"=== 30-MINUTE WHEEL STRATEGY SCAN ===")
 
-            # Step 1: Fresh market scan
-            new_candidates = self.market_scanner.scan_market_for_opportunities()
-            logging.info(f"Market scan completed: Found {len(new_candidates) if new_candidates else 0} candidates")
-
-            if new_candidates:
-                # Update rolling top-50
-                self.rolling_top_50 = new_candidates[:50]
-                print(f"{Colors.SUCCESS}  → Found {len(new_candidates)} opportunities{Colors.RESET}")
-
-            # Step 2: Batch Grok analysis (data is already fresh from scan)
-            if len(self.rolling_top_50) > 0:
-                print(f"{Colors.INFO}  → Analyzing top {len(self.rolling_top_50[:50])} with Grok...{Colors.RESET}")
-                # refresh_data=False because we just scanned - data is fresh (< 30 seconds old)
-                grok_rated = self.analyze_batch_with_grok(self.rolling_top_50[:50], refresh_data=False)
-            else:
-                grok_rated = []
-
-            if grok_rated:
-                # Update rolling top-25
-                self.update_rolling_top_25(grok_rated)
-
-                # Show current top opportunities
-                top_5 = sorted(self.rolling_top_25, key=lambda x: x.get('grok_confidence', 0), reverse=True)[:5]
-                print(f"\n{Colors.SUCCESS}[CURRENT TOP 5] Best opportunities after re-analysis:{Colors.RESET}\n")
-
-                print(f"{Colors.HEADER}  {'#':>2}  {'SYMBOL':6}  {'CONF':>4}  {'STRATEGY':18}  {'STRIKES':12}  {'EXPIRY':8}{Colors.RESET}")
-                print(f"{Colors.DIM}  {'─'*2}  {'─'*6}  {'─'*4}  {'─'*18}  {'─'*12}  {'─'*8}{Colors.RESET}")
-
-                for i, candidate in enumerate(top_5, 1):
-                    conf = candidate.get('grok_confidence', 0)
-                    strategy = candidate.get('strategy', 'UNKNOWN')[:18]
-                    strikes = candidate.get('strikes', 'N/A')[:12]
-                    expiry = candidate.get('expiry', 'N/A')[:8]
-
-                    conf_color = Colors.SUCCESS if conf >= 75 else Colors.WARNING if conf >= 60 else Colors.DIM
-
-                    print(f"  {i:>2}  {candidate['symbol']:6}  {conf_color}{conf:3d}%{Colors.RESET}  {strategy:18}  {strikes:12}  {expiry:8}")
-
-                print()
-
-                # Execute new high-confidence opportunities
-                for candidate in self.rolling_top_25:
-                    if candidate.get('grok_confidence', 0) >= 75:
-                        # Check if we haven't already traded this today
-                        self.evaluate_and_execute_trade(
-                            candidate['symbol'],
-                            candidate,
-                            candidate['options_data'],
-                            candidate['analysis']
-                        )
+            # WHEEL STRATEGY ONLY: Scan for systematic premium collection opportunities
+            self.execute_wheel_opportunities()
 
             self.last_grok_analysis_time = now
-
-            # Cache the rolling top-25 for --test-grok to use
-            if self.rolling_top_25:
-                self.scan_cache.save_scan(self.rolling_top_25, 'MARKET_HOURS_SCAN')
-
-        # Display rolling stats
-        if self.rolling_top_25:
-            best = max(self.rolling_top_25, key=lambda x: x.get('grok_confidence', 0))
-            print(f"{Colors.INFO}📊 Best current opportunity: {best['symbol']} ({best.get('grok_confidence', 0)}% confidence){Colors.RESET}\n")
 
         # Display portfolio overview after each scan to show position changes
         self.display_portfolio_summary()
@@ -3724,6 +3679,296 @@ Example: AAPL|EXIT|Stock momentum reversed, exit signal"""
         strike_int = int(strike * 1000)
         strike_str = f"{strike_int:08d}"
         return f"{symbol}{exp_str}{option_type}{strike_str}"
+
+    # =========================================================================
+    # WHEEL STRATEGY EXECUTION METHODS
+    # =========================================================================
+
+    def execute_wheel_opportunities(self):
+        """
+        Scan for and execute Wheel Strategy opportunities.
+        Called during market hours to identify quality stocks for systematic premium collection.
+
+        The Wheel Strategy has 50-95% win rate and 15-40% annual returns.
+        """
+        print(f"\n{Colors.HEADER}[WHEEL STRATEGY] Scanning for premium collection opportunities...{Colors.RESET}")
+        logging.info("="*80)
+        logging.info("WHEEL STRATEGY SCAN")
+        logging.info("="*80)
+
+        try:
+            # Get wheel stats
+            stats = self.wheel_manager.get_wheel_stats()
+            active_positions = stats['active_positions']
+
+            print(f"{Colors.INFO}[WHEEL] Active positions: {active_positions}/{self.wheel_strategy.MAX_WHEEL_POSITIONS}{Colors.RESET}")
+
+            if active_positions > 0:
+                print(f"{Colors.DIM}  Selling puts: {stats['selling_puts']}{Colors.RESET}")
+                print(f"{Colors.DIM}  Assigned (owning stock): {stats['assigned']}{Colors.RESET}")
+                print(f"{Colors.DIM}  Selling calls: {stats['selling_calls']}{Colors.RESET}")
+                print(f"{Colors.DIM}  Total premium collected: ${stats['total_premium_collected']:.2f}{Colors.RESET}")
+
+            if stats['completed_cycles'] > 0:
+                print(f"{Colors.SUCCESS}  Completed cycles: {stats['completed_cycles']} | "
+                      f"Avg ROI: {stats['avg_roi']:.1f}% | Win rate: {stats['win_rate']:.1f}%{Colors.RESET}")
+
+            # Check if we can add more wheel positions
+            if active_positions >= self.wheel_strategy.MAX_WHEEL_POSITIONS:
+                print(f"{Colors.WARNING}[WHEEL] Maximum wheel positions reached ({self.wheel_strategy.MAX_WHEEL_POSITIONS}){Colors.RESET}")
+                return
+
+            # Get account info for position sizing
+            account = self.trading_client.get_account()
+            account_value = float(account.equity) if account.equity is not None else 0.0
+
+            # Find wheel candidates
+            candidates = self.wheel_strategy.find_wheel_candidates(max_candidates=3)
+
+            if not candidates:
+                print(f"{Colors.DIM}[WHEEL] No wheel candidates found matching criteria{Colors.RESET}")
+                return
+
+            print(f"{Colors.SUCCESS}[WHEEL] Found {len(candidates)} wheel candidates:{Colors.RESET}\n")
+
+            for i, candidate in enumerate(candidates, 1):
+                print(f"  {i}. {candidate['symbol']:6} @ ${candidate['stock_price']:.2f} | "
+                      f"IV rank {candidate['iv_rank']:.0f}% | "
+                      f"{candidate['annual_return']:.1%} annual return")
+                print(f"{Colors.DIM}     Put: ${candidate['put_strike']:.2f} strike for ${candidate['put_premium']:.2f} premium{Colors.RESET}")
+
+            # Execute top candidate
+            top_candidate = candidates[0]
+            symbol = top_candidate['symbol']
+
+            # Check if we already have a position on this symbol
+            existing_position = self.wheel_manager.get_wheel_position(symbol)
+            if existing_position:
+                print(f"{Colors.WARNING}[WHEEL] {symbol}: Already have active wheel position{Colors.RESET}")
+                # Handle existing position (e.g., sell next call if assigned)
+                self._manage_existing_wheel_position(existing_position)
+                return
+
+            # Get the optimal put to sell
+            put_details = self.wheel_strategy.get_put_to_sell(symbol)
+            if not put_details:
+                print(f"{Colors.ERROR}[WHEEL] {symbol}: Could not find suitable put to sell{Colors.RESET}")
+                return
+
+            # Calculate position size
+            contracts = self.wheel_strategy.calculate_position_size(
+                symbol=symbol,
+                put_strike=put_details['strike'],
+                account_value=account_value,
+                existing_wheel_positions=active_positions
+            )
+
+            if contracts == 0:
+                print(f"{Colors.WARNING}[WHEEL] {symbol}: Insufficient capital or position limit reached{Colors.RESET}")
+                return
+
+            # Execute the put sale
+            print(f"\n{Colors.SUCCESS}[WHEEL] {symbol}: Selling {contracts} cash-secured put(s){Colors.RESET}")
+            print(f"  Strike: ${put_details['strike']:.2f}")
+            print(f"  Premium: ${put_details['premium']:.2f} (${put_details['premium'] * 100 * contracts:.2f} total)")
+            print(f"  Expiration: {put_details['expiration']} ({put_details['dte']} DTE)")
+            print(f"  Capital required: ${put_details['strike'] * 100 * contracts:,.2f}")
+
+            success = self._execute_wheel_put_sale(symbol, put_details, contracts)
+
+            if success:
+                print(f"{Colors.SUCCESS}✓ [WHEEL] {symbol}: Put sale executed successfully{Colors.RESET}\n")
+            else:
+                print(f"{Colors.ERROR}✗ [WHEEL] {symbol}: Put sale failed{Colors.RESET}\n")
+
+        except Exception as e:
+            logging.error(f"[WHEEL] Error executing wheel opportunities: {e}", exc_info=True)
+            print(f"{Colors.ERROR}[WHEEL ERROR] {str(e)}{Colors.RESET}")
+
+    def _execute_wheel_put_sale(self, symbol: str, put_details: Dict, contracts: int) -> bool:
+        """
+        Execute cash-secured put sale for wheel strategy.
+
+        Args:
+            symbol: Stock symbol
+            put_details: Put option details from wheel_strategy.get_put_to_sell()
+            contracts: Number of contracts to sell
+
+        Returns:
+            True if successful, False otherwise
+        """
+        try:
+            # Build option symbol in OCC format
+            option_symbol = put_details['option_symbol']
+            strike = put_details['strike']
+            premium = put_details['premium']
+
+            # Sell put order (sell-to-open)
+            from alpaca.trading.requests import OrderRequest
+            from alpaca.trading.enums import OrderSide, TimeInForce, OrderClass
+
+            # Calculate limit price (accept 85% of bid to improve fill rate)
+            limit_price = round(premium * 0.85, 2)
+
+            order_data = OrderRequest(
+                symbol=option_symbol,
+                qty=contracts,
+                side=OrderSide.SELL,
+                type='limit',
+                limit_price=limit_price,
+                time_in_force=TimeInForce.DAY
+            )
+
+            logging.info(f"[WHEEL] {symbol}: Submitting put sale order - {contracts} contracts @ ${limit_price:.2f}")
+
+            order = self.trading_client.submit_order(order_data)
+            order_id = order.id
+
+            logging.info(f"[WHEEL] {symbol}: Put sale order submitted - Order ID: {order_id}")
+
+            # Wait briefly for fill
+            time.sleep(5)
+            order_status = self.trading_client.get_order_by_id(order_id)
+
+            if order_status.status == 'filled':
+                fill_price = float(order_status.filled_avg_price) if order_status.filled_avg_price else limit_price
+                total_premium = fill_price * 100 * contracts
+
+                logging.info(f"[WHEEL] {symbol}: Put FILLED @ ${fill_price:.2f} (${total_premium:.2f} total)")
+
+                # Create wheel position in database
+                self.wheel_manager.create_wheel_position(
+                    symbol=symbol,
+                    initial_premium=total_premium,
+                    option_symbol=option_symbol,
+                    strike=strike,
+                    expiration=put_details['expiration'],
+                    notes=f"Wheel strategy initiated: ${total_premium:.2f} premium collected selling {contracts} puts @ ${strike:.2f}"
+                )
+
+                return True
+
+            elif order_status.status in ['pending_new', 'accepted', 'new']:
+                logging.info(f"[WHEEL] {symbol}: Put order pending (status: {order_status.status})")
+                return True  # Order submitted successfully, waiting for fill
+
+            else:
+                logging.warning(f"[WHEEL] {symbol}: Put order not filled (status: {order_status.status})")
+                return False
+
+        except Exception as e:
+            logging.error(f"[WHEEL] {symbol}: Error executing put sale: {e}", exc_info=True)
+            return False
+
+    def _manage_existing_wheel_position(self, position: Dict):
+        """
+        Manage existing wheel position based on current state.
+
+        Args:
+            position: Wheel position dict from wheel_manager.get_wheel_position()
+        """
+        symbol = position['symbol']
+        state = position['state']
+
+        try:
+            if state == WheelState.ASSIGNED.value:
+                # We own the stock, sell a covered call
+                print(f"{Colors.INFO}[WHEEL] {symbol}: Stock assigned, selling covered call...{Colors.RESET}")
+
+                call_details = self.wheel_strategy.get_call_to_sell(
+                    symbol=symbol,
+                    cost_basis=position['stock_cost_basis'],
+                    shares=position['shares_owned']
+                )
+
+                if call_details:
+                    success = self._execute_wheel_call_sale(symbol, call_details)
+                    if success:
+                        print(f"{Colors.SUCCESS}✓ [WHEEL] {symbol}: Covered call executed{Colors.RESET}")
+                else:
+                    print(f"{Colors.WARNING}[WHEEL] {symbol}: No suitable calls found{Colors.RESET}")
+
+            elif state == WheelState.SELLING_CALLS.value:
+                # Already selling calls, check if we should roll or close
+                print(f"{Colors.DIM}[WHEEL] {symbol}: Currently selling calls (${position['total_premium_collected']:.2f} total premium){Colors.RESET}")
+
+            elif state == WheelState.SELLING_PUTS.value:
+                # Already selling puts, check if we should sell another after expiration
+                print(f"{Colors.DIM}[WHEEL] {symbol}: Currently selling puts (${position['total_premium_collected']:.2f} total premium){Colors.RESET}")
+
+        except Exception as e:
+            logging.error(f"[WHEEL] {symbol}: Error managing existing position: {e}", exc_info=True)
+
+    def _execute_wheel_call_sale(self, symbol: str, call_details: Dict) -> bool:
+        """
+        Execute covered call sale for wheel strategy.
+
+        Args:
+            symbol: Stock symbol
+            call_details: Call option details from wheel_strategy.get_call_to_sell()
+
+        Returns:
+            True if successful, False otherwise
+        """
+        try:
+            option_symbol = call_details['option_symbol']
+            strike = call_details['strike']
+            premium = call_details['premium']
+            contracts = call_details['contracts']
+
+            # Sell call order (sell-to-open)
+            from alpaca.trading.requests import OrderRequest
+            from alpaca.trading.enums import OrderSide, TimeInForce
+
+            # Calculate limit price (accept 85% of bid to improve fill rate)
+            limit_price = round(premium * 0.85, 2)
+
+            order_data = OrderRequest(
+                symbol=option_symbol,
+                qty=contracts,
+                side=OrderSide.SELL,
+                type='limit',
+                limit_price=limit_price,
+                time_in_force=TimeInForce.DAY
+            )
+
+            logging.info(f"[WHEEL] {symbol}: Submitting call sale order - {contracts} contracts @ ${limit_price:.2f}")
+
+            order = self.trading_client.submit_order(order_data)
+            order_id = order.id
+
+            # Wait briefly for fill
+            time.sleep(5)
+            order_status = self.trading_client.get_order_by_id(order_id)
+
+            if order_status.status == 'filled':
+                fill_price = float(order_status.filled_avg_price) if order_status.filled_avg_price else limit_price
+                total_premium = fill_price * 100 * contracts
+
+                logging.info(f"[WHEEL] {symbol}: Call FILLED @ ${fill_price:.2f} (${total_premium:.2f} total)")
+
+                # Update wheel position to SELLING_CALLS state
+                self.wheel_manager.mark_selling_calls(
+                    symbol=symbol,
+                    call_premium=total_premium,
+                    option_symbol=option_symbol,
+                    strike=strike,
+                    expiration=call_details['expiration']
+                )
+
+                return True
+
+            elif order_status.status in ['pending_new', 'accepted', 'new']:
+                logging.info(f"[WHEEL] {symbol}: Call order pending (status: {order_status.status})")
+                return True
+
+            else:
+                logging.warning(f"[WHEEL] {symbol}: Call order not filled (status: {order_status.status})")
+                return False
+
+        except Exception as e:
+            logging.error(f"[WHEEL] {symbol}: Error executing call sale: {e}", exc_info=True)
+            return False
 
 
 if __name__ == '__main__':
