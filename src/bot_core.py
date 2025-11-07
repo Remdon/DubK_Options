@@ -3804,17 +3804,16 @@ Example: AAPL|EXIT|Stock momentum reversed, exit signal"""
             premium = put_details['premium']
 
             # Sell put order (sell-to-open)
-            from alpaca.trading.requests import OrderRequest
-            from alpaca.trading.enums import OrderSide, TimeInForce, OrderClass
+            from alpaca.trading.requests import LimitOrderRequest
+            from alpaca.trading.enums import OrderSide, TimeInForce
 
             # Calculate limit price (accept 85% of bid to improve fill rate)
             limit_price = round(premium * 0.85, 2)
 
-            order_data = OrderRequest(
+            order_data = LimitOrderRequest(
                 symbol=option_symbol,
                 qty=contracts,
                 side=OrderSide.SELL,
-                type='limit',
                 limit_price=limit_price,
                 time_in_force=TimeInForce.DAY
             )
@@ -3917,17 +3916,16 @@ Example: AAPL|EXIT|Stock momentum reversed, exit signal"""
             contracts = call_details['contracts']
 
             # Sell call order (sell-to-open)
-            from alpaca.trading.requests import OrderRequest
+            from alpaca.trading.requests import LimitOrderRequest
             from alpaca.trading.enums import OrderSide, TimeInForce
 
             # Calculate limit price (accept 85% of bid to improve fill rate)
             limit_price = round(premium * 0.85, 2)
 
-            order_data = OrderRequest(
+            order_data = LimitOrderRequest(
                 symbol=option_symbol,
                 qty=contracts,
                 side=OrderSide.SELL,
-                type='limit',
                 limit_price=limit_price,
                 time_in_force=TimeInForce.DAY
             )
