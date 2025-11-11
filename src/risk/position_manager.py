@@ -29,10 +29,11 @@ def extract_underlying_symbol(full_symbol: str) -> str:
 class PositionManager:
     """Manages position exits with stop losses and profit targets"""
 
-    def __init__(self, trading_client, trade_journal, multi_leg_manager=None):
+    def __init__(self, trading_client, trade_journal, multi_leg_manager=None, wheel_manager=None):
         self.trading_client = trading_client
         self.journal = trade_journal
         self.multi_leg_manager = multi_leg_manager  # For closing spreads atomically
+        self.wheel_manager = wheel_manager  # For checking if position is part of Wheel strategy
 
         # FIXED: Issue #6 - Strategy-specific stop losses
         # Exit rules (defaults)
@@ -183,8 +184,17 @@ class PositionManager:
                 plpc = float(position.unrealized_plpc) if position.unrealized_plpc is not None else 0.0
                 logging.info(f"Position: {position.symbol} | Qty: {position.qty} | Entry: ${avg_entry:.2f} | Current: ${current:.2f} | P&L: ${pl:,.2f} ({plpc:+.1%})")
 
-                # Check if this is part of a multi-leg strategy
+                # Check if this is part of a Wheel strategy - SKIP EXIT CHECKS FOR WHEEL POSITIONS
                 underlying = extract_underlying_symbol(position.symbol)
+                if self.wheel_manager:
+                    wheel_position = self.wheel_manager.get_wheel_position(underlying)
+                    if wheel_position:
+                        logging.info(f"  → WHEEL POSITION: {underlying} in state {wheel_position['state']} - HOLDING until expiration/assignment")
+                        print(f"  {Colors.INFO}[WHEEL] {underlying}: Holding position (no stop loss, expires {wheel_position.get('current_expiration', 'N/A')}){Colors.RESET}")
+                        processed_symbols.add(position.symbol)
+                        continue
+
+                # Check if this is part of a multi-leg strategy
                 strategy_info = self.journal.get_position_strategy(underlying)
 
                 if strategy_info:

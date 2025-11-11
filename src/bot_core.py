@@ -214,9 +214,6 @@ class OptionsBot:
         self.multi_leg_manager = MultiLegOptionsManager(self.trading_client, OptionsValidator)
         self.multi_leg_order_manager = MultiLegOrderManager(self.trading_client, OptionsValidator)
 
-        # Initialize position manager with multi_leg_order_manager for atomic spread closures
-        self.position_manager = PositionManager(self.trading_client, self.trade_journal, self.multi_leg_order_manager)
-
         # PHASE 1: Initialize multi-leg order tracker for atomic operations
         self.multi_leg_tracker = MultiLegOrderTracker()
 
@@ -226,7 +223,7 @@ class OptionsBot:
         # PHASE 3: Initialize batch operations manager
         self.batch_manager = BatchOrderManager(self.trading_client, self.multi_leg_tracker, self.alert_manager)
 
-        # WHEEL STRATEGY: Initialize The Wheel for systematic premium collection
+        # WHEEL STRATEGY: Initialize The Wheel for systematic premium collection (BEFORE position_manager)
         self.wheel_manager = WheelManager(db_path=config.DB_PATH)
         self.wheel_strategy = WheelStrategy(
             trading_client=self.trading_client,
@@ -236,6 +233,15 @@ class OptionsBot:
         )
         self.wheel_strategy.wheel_db = self.wheel_manager  # Link database manager
         logging.info(f"[WHEEL] The Wheel Strategy initialized - 50-95% win rate expected")
+
+        # Initialize position manager AFTER wheel_manager so it can skip Wheel positions
+        self.position_manager = PositionManager(
+            self.trading_client,
+            self.trade_journal,
+            self.multi_leg_order_manager,
+            self.wheel_manager  # Pass wheel_manager to skip exit checks for Wheel positions
+        )
+        logging.info(f"[POSITION MANAGER] Initialized with Wheel position protection")
 
         # Initialize Grok logger for detailed AI analysis logging
         self.grok_logger = logging.getLogger('grok')
