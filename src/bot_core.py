@@ -465,8 +465,20 @@ class OptionsBot:
                 # Extract underlying symbol
                 underlying = self._extract_underlying(symbol)
 
-                # Get strategy info from database
+                # Get strategy info from database (check trade journal first, then wheel positions)
                 strategy_info = self.trade_journal.get_position_strategy(underlying)
+
+                # If not found in trade journal, check if it's a Wheel position
+                if not strategy_info:
+                    wheel_position = self.wheel_manager.get_wheel_position(underlying)
+                    if wheel_position:
+                        strategy_info = {
+                            'strategy': f"WHEEL_{wheel_position['state']}",
+                            'strikes': f"${wheel_position.get('current_strike', 0):.2f}" if wheel_position.get('current_strike') else '',
+                            'expiry': wheel_position.get('current_expiration', ''),
+                            'reason': f"Wheel Strategy: {wheel_position['state']} | Premium collected: ${wheel_position['total_premium_collected']:.2f}",
+                            'grok_notes': ''
+                        }
 
                 if strategy_info:
                     strategy = strategy_info.get('strategy', 'UNKNOWN')
