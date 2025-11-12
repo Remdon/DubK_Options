@@ -68,7 +68,7 @@ This bot implements **The Wheel Strategy** - one of the highest win-rate options
 
 ```python
 # IV Requirements
-WHEEL_MIN_IV_RANK = 60   # Only sell when IV elevated
+WHEEL_MIN_IV_RANK = 50   # Sell when IV elevated (adaptive to market conditions)
 WHEEL_MAX_IV_RANK = 100  # Can sell at any high IV
 
 # Stock Quality
@@ -77,8 +77,8 @@ WHEEL_MAX_STOCK_PRICE = $150    # Affordable for assignment
 WHEEL_MIN_MARKET_CAP = $2B      # Quality companies only
 
 # Position Limits
-MAX_WHEEL_POSITIONS = 5          # Max 5 positions
-MAX_CAPITAL_PER_WHEEL = 20%      # 20% capital per position
+MAX_WHEEL_POSITIONS = 7          # Max 7 positions
+MAX_CAPITAL_PER_WHEEL = 14%      # 14% capital per position (98% total)
 
 # Strike Selection
 WHEEL_PUT_OTM_PERCENT = 0.90     # Sell puts 10% OTM

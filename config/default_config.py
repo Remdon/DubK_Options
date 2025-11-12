@@ -54,7 +54,7 @@ class Config:
         # Wheel has 50-95% win rate vs 25% for directional spreads
 
         # Wheel IV requirements
-        self.WHEEL_MIN_IV_RANK = float(os.getenv('WHEEL_MIN_IV_RANK', '60'))  # Only sell when IV is elevated
+        self.WHEEL_MIN_IV_RANK = float(os.getenv('WHEEL_MIN_IV_RANK', '50'))  # Only sell when IV is elevated (lowered from 60 to adapt to low-vol environment)
         self.WHEEL_MAX_IV_RANK = float(os.getenv('WHEEL_MAX_IV_RANK', '100'))  # Can sell at any high IV
 
         # Wheel stock quality filters
