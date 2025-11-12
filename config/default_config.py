@@ -68,8 +68,8 @@ class Config:
 
         # Wheel DTE parameters
         self.WHEEL_TARGET_DTE = int(os.getenv('WHEEL_TARGET_DTE', '35'))  # 30-45 days optimal
-        self.WHEEL_MIN_DTE = int(os.getenv('WHEEL_MIN_DTE', '25'))
-        self.WHEEL_MAX_DTE = int(os.getenv('WHEEL_MAX_DTE', '45'))
+        self.WHEEL_MIN_DTE = int(os.getenv('WHEEL_MIN_DTE', '21'))  # Include weekly options (was 25)
+        self.WHEEL_MAX_DTE = int(os.getenv('WHEEL_MAX_DTE', '60'))  # More flexibility (was 45)
 
         # Wheel strike selection
         self.WHEEL_PUT_OTM_PERCENT = float(os.getenv('WHEEL_PUT_OTM_PERCENT', '0.90'))  # Sell puts 10% OTM

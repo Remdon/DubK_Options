@@ -305,10 +305,20 @@ class WheelStrategy:
                 if premium < 0.10:
                     continue
 
-                # Score: prefer closer to target DTE and higher premium
+                # LIQUIDITY FILTER: Check volume and open interest
+                volume = put.get('volume', 0)
+                open_interest = put.get('open_interest', 0)
+
+                # Require minimum liquidity for execution
+                # Relaxed requirements: at least 10 volume OR 100 open interest
+                if volume < 10 and open_interest < 100:
+                    continue  # Skip illiquid options
+
+                # Score: prefer closer to target DTE, higher premium, and better liquidity
                 dte_score = 1.0 - abs(dte - target_dte) / self.MAX_DTE
                 premium_score = premium / (strike * 0.05)  # Normalize by ~5% of strike
-                score = dte_score * 0.4 + premium_score * 0.6
+                liquidity_score = min(1.0, (volume + open_interest / 10) / 100)  # Normalize liquidity
+                score = dte_score * 0.3 + premium_score * 0.5 + liquidity_score * 0.2
 
                 if score > best_score:
                     best_score = score

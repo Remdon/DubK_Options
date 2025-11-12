@@ -3755,49 +3755,54 @@ Example: AAPL|EXIT|Stock momentum reversed, exit signal"""
                       f"{candidate['annual_return']:.1%} annual return")
                 print(f"{Colors.DIM}     Put: ${candidate['put_strike']:.2f} strike for ${candidate['put_premium']:.2f} premium{Colors.RESET}")
 
-            # Execute top candidate
-            top_candidate = candidates[0]
-            symbol = top_candidate['symbol']
+            # Try each candidate until one executes successfully
+            for candidate in candidates:
+                symbol = candidate['symbol']
 
-            # Check if we already have a position on this symbol
-            existing_position = self.wheel_manager.get_wheel_position(symbol)
-            if existing_position:
-                print(f"{Colors.WARNING}[WHEEL] {symbol}: Already have active wheel position{Colors.RESET}")
-                # Handle existing position (e.g., sell next call if assigned)
-                self._manage_existing_wheel_position(existing_position)
-                return
+                # Check if we already have a position on this symbol
+                existing_position = self.wheel_manager.get_wheel_position(symbol)
+                if existing_position:
+                    print(f"\n{Colors.WARNING}[WHEEL] {symbol}: Already have active wheel position, skipping{Colors.RESET}")
+                    # Handle existing position (e.g., sell next call if assigned)
+                    self._manage_existing_wheel_position(existing_position)
+                    continue  # Try next candidate
 
-            # Get the optimal put to sell
-            put_details = self.wheel_strategy.get_put_to_sell(symbol)
-            if not put_details:
-                print(f"{Colors.ERROR}[WHEEL] {symbol}: Could not find suitable put to sell{Colors.RESET}")
-                return
+                # Get the optimal put to sell
+                put_details = self.wheel_strategy.get_put_to_sell(symbol)
+                if not put_details:
+                    print(f"\n{Colors.ERROR}[WHEEL] {symbol}: Could not find suitable put to sell, trying next candidate{Colors.RESET}")
+                    continue  # Try next candidate
 
-            # Calculate position size
-            contracts = self.wheel_strategy.calculate_position_size(
-                symbol=symbol,
-                put_strike=put_details['strike'],
-                account_value=account_value,
-                existing_wheel_positions=active_positions
-            )
+                # Calculate position size
+                contracts = self.wheel_strategy.calculate_position_size(
+                    symbol=symbol,
+                    put_strike=put_details['strike'],
+                    account_value=account_value,
+                    existing_wheel_positions=active_positions
+                )
 
-            if contracts == 0:
-                print(f"{Colors.WARNING}[WHEEL] {symbol}: Insufficient capital or position limit reached{Colors.RESET}")
-                return
+                if contracts == 0:
+                    print(f"\n{Colors.WARNING}[WHEEL] {symbol}: Insufficient capital or position limit reached, trying next candidate{Colors.RESET}")
+                    continue  # Try next candidate
 
-            # Execute the put sale
-            print(f"\n{Colors.SUCCESS}[WHEEL] {symbol}: Selling {contracts} cash-secured put(s){Colors.RESET}")
-            print(f"  Strike: ${put_details['strike']:.2f}")
-            print(f"  Premium: ${put_details['premium']:.2f} (${put_details['premium'] * 100 * contracts:.2f} total)")
-            print(f"  Expiration: {put_details['expiration']} ({put_details['dte']} DTE)")
-            print(f"  Capital required: ${put_details['strike'] * 100 * contracts:,.2f}")
+                # Execute the put sale
+                print(f"\n{Colors.SUCCESS}[WHEEL] {symbol}: Attempting to sell {contracts} cash-secured put(s){Colors.RESET}")
+                print(f"  Strike: ${put_details['strike']:.2f}")
+                print(f"  Premium: ${put_details['premium']:.2f} (${put_details['premium'] * 100 * contracts:.2f} total)")
+                print(f"  Expiration: {put_details['expiration']} ({put_details['dte']} DTE)")
+                print(f"  Capital required: ${put_details['strike'] * 100 * contracts:,.2f}")
 
-            success = self._execute_wheel_put_sale(symbol, put_details, contracts)
+                success = self._execute_wheel_put_sale(symbol, put_details, contracts)
 
-            if success:
-                print(f"{Colors.SUCCESS}✓ [WHEEL] {symbol}: Put sale executed successfully{Colors.RESET}\n")
-            else:
-                print(f"{Colors.ERROR}✗ [WHEEL] {symbol}: Put sale failed{Colors.RESET}\n")
+                if success:
+                    print(f"{Colors.SUCCESS}✓ [WHEEL] {symbol}: Put sale executed successfully!{Colors.RESET}\n")
+                    return  # Successfully executed, stop trying candidates
+                else:
+                    print(f"{Colors.ERROR}✗ [WHEEL] {symbol}: Put sale failed, trying next candidate{Colors.RESET}\n")
+                    continue  # Try next candidate
+
+            # If we get here, no candidates executed successfully
+            print(f"{Colors.WARNING}[WHEEL] No candidates executed successfully this scan{Colors.RESET}")
 
         except Exception as e:
             logging.error(f"[WHEEL] Error executing wheel opportunities: {e}", exc_info=True)
