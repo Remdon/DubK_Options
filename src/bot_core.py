@@ -3736,12 +3736,16 @@ Example: AAPL|EXIT|Stock momentum reversed, exit signal"""
                 print(f"{Colors.WARNING}[WHEEL] Maximum wheel positions reached ({self.wheel_strategy.MAX_WHEEL_POSITIONS}){Colors.RESET}")
                 return
 
+            # Calculate how many positions we can add
+            positions_to_fill = self.wheel_strategy.MAX_WHEEL_POSITIONS - active_positions
+            print(f"{Colors.INFO}[WHEEL] Can add {positions_to_fill} more position(s){Colors.RESET}")
+
             # Get account info for position sizing
             account = self.trading_client.get_account()
             account_value = float(account.equity) if account.equity is not None else 0.0
 
-            # Find wheel candidates
-            candidates = self.wheel_strategy.find_wheel_candidates(max_candidates=3)
+            # Find wheel candidates (request enough to fill all slots)
+            candidates = self.wheel_strategy.find_wheel_candidates(max_candidates=min(positions_to_fill * 2, 10))
 
             if not candidates:
                 print(f"{Colors.DIM}[WHEEL] No wheel candidates found matching criteria{Colors.RESET}")
@@ -3755,8 +3759,15 @@ Example: AAPL|EXIT|Stock momentum reversed, exit signal"""
                       f"{candidate['annual_return']:.1%} annual return")
                 print(f"{Colors.DIM}     Put: ${candidate['put_strike']:.2f} strike for ${candidate['put_premium']:.2f} premium{Colors.RESET}")
 
-            # Try each candidate until one executes successfully
+            # Try to fill multiple positions in one scan
+            positions_filled = 0
+
             for candidate in candidates:
+                # Check if we've filled all available slots
+                if positions_filled >= positions_to_fill:
+                    print(f"\n{Colors.SUCCESS}[WHEEL] Filled {positions_filled} position(s) this scan{Colors.RESET}")
+                    break
+
                 symbol = candidate['symbol']
 
                 # Check if we already have a position on this symbol
@@ -3773,16 +3784,19 @@ Example: AAPL|EXIT|Stock momentum reversed, exit signal"""
                     print(f"\n{Colors.ERROR}[WHEEL] {symbol}: Could not find suitable put to sell, trying next candidate{Colors.RESET}")
                     continue  # Try next candidate
 
+                # Update active position count for sizing (includes positions filled this scan)
+                current_positions = active_positions + positions_filled
+
                 # Calculate position size
                 contracts = self.wheel_strategy.calculate_position_size(
                     symbol=symbol,
                     put_strike=put_details['strike'],
                     account_value=account_value,
-                    existing_wheel_positions=active_positions
+                    existing_wheel_positions=current_positions
                 )
 
                 if contracts == 0:
-                    print(f"\n{Colors.WARNING}[WHEEL] {symbol}: Insufficient capital or position limit reached, trying next candidate{Colors.RESET}")
+                    print(f"\n{Colors.WARNING}[WHEEL] {symbol}: Insufficient capital or position limit reached{Colors.RESET}")
                     continue  # Try next candidate
 
                 # Execute the put sale
@@ -3795,14 +3809,18 @@ Example: AAPL|EXIT|Stock momentum reversed, exit signal"""
                 success = self._execute_wheel_put_sale(symbol, put_details, contracts)
 
                 if success:
-                    print(f"{Colors.SUCCESS}✓ [WHEEL] {symbol}: Put sale executed successfully!{Colors.RESET}\n")
-                    return  # Successfully executed, stop trying candidates
+                    positions_filled += 1
+                    print(f"{Colors.SUCCESS}✓ [WHEEL] {symbol}: Put sale executed successfully! ({positions_filled}/{positions_to_fill} filled){Colors.RESET}\n")
+                    # Continue to next candidate (don't return - fill more slots!)
                 else:
                     print(f"{Colors.ERROR}✗ [WHEEL] {symbol}: Put sale failed, trying next candidate{Colors.RESET}\n")
                     continue  # Try next candidate
 
-            # If we get here, no candidates executed successfully
-            print(f"{Colors.WARNING}[WHEEL] No candidates executed successfully this scan{Colors.RESET}")
+            # Summary
+            if positions_filled > 0:
+                print(f"{Colors.SUCCESS}[WHEEL] Successfully filled {positions_filled} position(s) this scan{Colors.RESET}")
+            else:
+                print(f"{Colors.WARNING}[WHEEL] No candidates executed successfully this scan{Colors.RESET}")
 
         except Exception as e:
             logging.error(f"[WHEEL] Error executing wheel opportunities: {e}", exc_info=True)
