@@ -4,6 +4,35 @@ All notable changes to the Wheel Strategy implementation.
 
 ---
 
+## [2025-11-12] - Multi-Position Filling Per Scan
+
+### Fixed
+- **Position Capacity**: Bot now fills ALL available position slots per scan (not just 1)
+  - **Problem**: Bot found multiple candidates but only placed 1 order, then stopped
+  - **Root Cause**: After successful execution, code did `return` (exit function) instead of continuing
+  - **Impact**: Only 1/7 position slots filled per scan, severely underutilizing capital
+  - **Fix**: Loop through all candidates, track positions_filled, continue until all slots filled
+  - **Expected**: Bot will now fill 3-7 positions in first scan (depending on candidate quality)
+
+### Changed
+- **Candidate Requests**: Now dynamic based on available slots (positions_to_fill × 2, max 10)
+  - **Before**: Always requested 3 candidates regardless of capacity
+  - **After**: Requests 2× candidates per open slot to ensure enough options
+  - **Reason**: Maximize chance of filling all slots even if some candidates fail validation
+
+### Added
+- **Position Tracking During Scan**: Updates position count as slots are filled
+  - **Purpose**: Ensures accurate capital allocation per position (14% recalculated as slots fill)
+  - **Impact**: Each position sized correctly even when multiple filled in single scan
+  - **Example**: Position 1 gets 14%, Position 2 gets 14%, etc. (not all 98%)
+
+### Files Modified
+- `src/bot_core.py`: Multi-position filling logic (lines 3739-3823)
+
+**Expected Result**: First scan should fill 3-7 positions if enough quality candidates found
+
+---
+
 ## [2025-11-12] - Execution Fix: Loop All Candidates
 
 ### Fixed
