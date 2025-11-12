@@ -63,8 +63,8 @@ class Config:
         self.WHEEL_MIN_MARKET_CAP = float(os.getenv('WHEEL_MIN_MARKET_CAP', '2000000000'))  # $2B minimum
 
         # Wheel position limits
-        self.MAX_WHEEL_POSITIONS = int(os.getenv('MAX_WHEEL_POSITIONS', '5'))  # Max 5 wheel positions
-        self.MAX_CAPITAL_PER_WHEEL = float(os.getenv('MAX_CAPITAL_PER_WHEEL', '0.20'))  # 20% per wheel
+        self.MAX_WHEEL_POSITIONS = int(os.getenv('MAX_WHEEL_POSITIONS', '7'))  # Max 7 wheel positions
+        self.MAX_CAPITAL_PER_WHEEL = float(os.getenv('MAX_CAPITAL_PER_WHEEL', '0.14'))  # 14% per wheel (98% total)
 
         # Wheel DTE parameters
         self.WHEEL_TARGET_DTE = int(os.getenv('WHEEL_TARGET_DTE', '35'))  # 30-45 days optimal

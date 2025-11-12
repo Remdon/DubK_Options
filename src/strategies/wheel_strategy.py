@@ -479,23 +479,27 @@ class WheelStrategy:
             logging.warning(f"[WHEEL] {symbol}: Maximum wheel positions ({self.MAX_WHEEL_POSITIONS}) reached")
             return 0
 
-        # Calculate max capital for this position
+        # Calculate max capital for this position (percentage of account)
         max_capital = account_value * self.MAX_CAPITAL_PER_WHEEL
 
         # Each contract requires cash securing 100 shares at strike price
         capital_per_contract = put_strike * 100
 
-        # Calculate max contracts
+        # Calculate max contracts based on allocated capital
         max_contracts = int(max_capital / capital_per_contract)
 
-        # Start conservative: 1 contract per position
-        contracts = min(1, max_contracts)
+        # Use full allocated capital (not just 1 contract!)
+        # Cap at reasonable limit to avoid over-concentration
+        MAX_CONTRACTS_PER_POSITION = 10  # Safety limit
+        contracts = min(max_contracts, MAX_CONTRACTS_PER_POSITION)
 
         if contracts == 0:
             logging.warning(f"[WHEEL] {symbol}: Insufficient capital for wheel position "
                           f"(need ${capital_per_contract:.2f}, have ${max_capital:.2f})")
         else:
+            actual_capital = capital_per_contract * contracts
+            pct_of_account = (actual_capital / account_value) * 100
             logging.info(f"[WHEEL] {symbol}: Position size {contracts} contract(s) "
-                       f"(${capital_per_contract * contracts:.2f} capital required)")
+                       f"(${actual_capital:,.2f} capital = {pct_of_account:.1f}% of account)")
 
         return contracts
