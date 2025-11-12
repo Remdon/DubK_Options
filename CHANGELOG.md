@@ -4,6 +4,40 @@ All notable changes to the Wheel Strategy implementation.
 
 ---
 
+## [2025-11-12] - Execution Fix: Loop All Candidates
+
+### Fixed
+- **Execution Logic**: Bot now loops through ALL candidates until one succeeds
+  - **Problem**: Bot found 3 candidates (NTSK, CMCSA, CART) but no orders placed
+  - **Root Cause**: Code stopped after first candidate (NTSK) failed - used `return` instead of `continue`
+  - **Impact**: Bot gave up instead of trying CMCSA and CART
+  - **Fix**: Changed to loop with `continue` on failure, `return` on success
+  - **Expected**: Bot will now execute on subsequent candidates when first fails
+
+### Changed
+- **DTE Range Expanded**: 25-45 days → 21-60 days
+  - **MIN_DTE**: 25 → 21 (includes weekly options)
+  - **MAX_DTE**: 45 → 60 (more flexibility)
+  - **Reason**: NTSK had "no puts in 25-45 range" but may have 21-day weeklies
+  - **Impact**: More options available for execution, especially for lower-volume stocks
+
+### Added
+- **Liquidity Filters**: Pre-screen options for tradability
+  - **Requirement**: Minimum 10 volume OR 100 open interest
+  - **Scoring**: Added liquidity as 20% weight in option selection
+  - **Reason**: Prevent bot from trying to trade illiquid options that won't fill
+  - **Impact**: Higher execution rate, better fills
+
+### Files Modified
+- `src/bot_core.py`: Execution loop logic (lines 3758-3805)
+- `config/default_config.py`: DTE range parameters
+- `src/strategies/wheel_strategy.py`: Liquidity filtering and scoring
+- `FIXES_APPLIED_2025-11-12.md`: Complete documentation
+
+**Expected Result**: Next scan should execute successfully on CMCSA or CART
+
+---
+
 ## [2025-11-12] - Universe Expansion Fix
 
 ### Added
