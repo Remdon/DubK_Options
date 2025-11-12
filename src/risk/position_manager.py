@@ -184,15 +184,43 @@ class PositionManager:
                 plpc = float(position.unrealized_plpc) if position.unrealized_plpc is not None else 0.0
                 logging.info(f"Position: {position.symbol} | Qty: {position.qty} | Entry: ${avg_entry:.2f} | Current: ${current:.2f} | P&L: ${pl:,.2f} ({plpc:+.1%})")
 
-                # Check if this is part of a Wheel strategy - SKIP EXIT CHECKS FOR WHEEL POSITIONS
+                # Check if this is part of a Wheel strategy - CHECK PROFIT TARGETS FIRST
                 underlying = extract_underlying_symbol(position.symbol)
                 if self.wheel_manager:
                     wheel_position = self.wheel_manager.get_wheel_position(underlying)
                     if wheel_position:
-                        logging.info(f"  → WHEEL POSITION: {underlying} in state {wheel_position['state']} - HOLDING until expiration/assignment")
-                        print(f"  {Colors.INFO}[WHEEL] {underlying}: Holding position (no stop loss, expires {wheel_position.get('current_expiration', 'N/A')}){Colors.RESET}")
-                        processed_symbols.add(position.symbol)
-                        continue
+                        # Calculate current P&L percentage
+                        qty = int(position.qty) if position.qty is not None else 0
+                        unrealized_pl_pct = float(position.unrealized_plpc) if position.unrealized_plpc is not None else 0.0
+                        dte = self._get_days_to_expiration(position.symbol)
+
+                        # Get Wheel profit target from config (50% of max profit)
+                        wheel_profit_target = getattr(self.config, 'WHEEL_PROFIT_TARGET_PCT', 0.50)
+
+                        # TastyTrade Research: 50% profit target + 21 DTE management
+                        exit_reason = None
+
+                        # Check 50% profit target (optimal for credit strategies)
+                        if unrealized_pl_pct >= wheel_profit_target:
+                            exit_reason = f"WHEEL_PROFIT_TARGET ({unrealized_pl_pct:.1%} profit - taking 50% of max)"
+
+                        # Check 21 DTE early management (if 25%+ profit)
+                        elif dte is not None and dte <= 21 and unrealized_pl_pct >= 0.25:
+                            exit_reason = f"WHEEL_21DTE_MANAGEMENT ({unrealized_pl_pct:.1%} profit at {dte} DTE)"
+
+                        if exit_reason:
+                            # Execute profit-taking exit
+                            logging.info(f"  → WHEEL EXIT: {underlying} - {exit_reason}")
+                            print(f"  {Colors.SUCCESS}[WHEEL] {underlying}: {exit_reason} - Closing to redeploy capital{Colors.RESET}")
+                            self._execute_exit(position, exit_reason)
+                            processed_symbols.add(position.symbol)
+                            continue
+                        else:
+                            # Hold position - no exit criteria met
+                            logging.info(f"  → WHEEL POSITION: {underlying} in state {wheel_position['state']} - HOLDING until expiration/assignment")
+                            print(f"  {Colors.INFO}[WHEEL] {underlying}: Holding position (P&L: {unrealized_pl_pct:+.1%}, expires {wheel_position.get('current_expiration', 'N/A')}){Colors.RESET}")
+                            processed_symbols.add(position.symbol)
+                            continue
 
                 # Check if this is part of a multi-leg strategy
                 strategy_info = self.journal.get_position_strategy(underlying)

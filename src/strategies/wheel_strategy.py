@@ -102,6 +102,28 @@ class WheelStrategy:
             }
         """
         logging.info(f"[WHEEL] Searching for wheel candidates...")
+
+        # VIX-BASED POSITION THROTTLE: Black swan protection
+        try:
+            vix_data = self.openbb_client.get_quote('VIX')
+            if vix_data and 'results' in vix_data:
+                results = vix_data['results']
+                if isinstance(results, list) and len(results) > 0:
+                    vix_price = results[0].get('last_price') or results[0].get('close')
+                elif isinstance(results, dict):
+                    vix_price = results.get('last_price') or results.get('close')
+                else:
+                    vix_price = None
+
+                if vix_price and vix_price > 30:
+                    logging.warning(f"[WHEEL] VIX ELEVATED: {vix_price:.2f} (> 30) - PAUSING new positions for black swan protection")
+                    print(f"{Fore.YELLOW}[WHEEL] VIX at {vix_price:.2f} - Market stress detected, pausing new Wheel positions{Style.RESET_ALL}")
+                    return []  # No new positions during high volatility
+                elif vix_price:
+                    logging.info(f"[WHEEL] VIX check: {vix_price:.2f} (< 30) - Normal market conditions")
+        except Exception as e:
+            logging.warning(f"[WHEEL] Could not fetch VIX (continuing anyway): {e}")
+
         candidates = []
 
         # Get universe from scanner
@@ -335,8 +357,15 @@ class WheelStrategy:
                     }
 
             if best_put:
+                # Calculate probability from delta (delta = probability ITM)
+                delta = best_put.get('delta', 0)
+                prob_otm = (1.0 - abs(delta)) * 100 if delta else 0  # Convert to probability OTM
+                delta_str = f"Δ {delta:.2f}" if delta else "Δ N/A"
+                prob_str = f" ({prob_otm:.0f}% prob OTM)" if delta else ""
+
                 logging.info(f"[WHEEL] {symbol}: Found put to sell - ${best_put['strike']:.2f} "
-                           f"strike, ${best_put['premium']:.2f} premium, {best_put['dte']} DTE")
+                           f"strike, ${best_put['premium']:.2f} premium, {best_put['dte']} DTE, "
+                           f"{delta_str}{prob_str} [Vol: {best_put.get('volume', 0)}, OI: {best_put.get('open_interest', 0)}]")
             else:
                 logging.warning(f"[WHEEL] {symbol}: No suitable puts found in {self.MIN_DTE}-{self.MAX_DTE} DTE range "
                               f"(target strike: ${target_strike:.2f}, checked {len(puts)} puts)")
@@ -458,8 +487,14 @@ class WheelStrategy:
 
             if best_call:
                 total_premium = best_call['premium'] * 100 * contracts
+                delta = best_call.get('delta', 0)
+                prob_otm = (1.0 - abs(delta)) * 100 if delta else 0  # For calls, delta is probability ITM
+                delta_str = f"Δ {delta:.2f}" if delta else "Δ N/A"
+                prob_str = f" ({prob_otm:.0f}% prob OTM)" if delta else ""
+
                 logging.info(f"[WHEEL] {symbol}: Found call to sell - ${best_call['strike']:.2f} strike, "
-                           f"${best_call['premium']:.2f} premium (${total_premium:.2f} total), {best_call['dte']} DTE")
+                           f"${best_call['premium']:.2f} premium (${total_premium:.2f} total), {best_call['dte']} DTE, "
+                           f"{delta_str}{prob_str} [Vol: {best_call.get('volume', 0)}, OI: {best_call.get('open_interest', 0)}]")
             else:
                 logging.warning(f"[WHEEL] {symbol}: No suitable calls found above ${min_strike:.2f} "
                               f"in {self.MIN_DTE}-{self.MAX_DTE} DTE range")
