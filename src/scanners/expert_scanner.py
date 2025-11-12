@@ -102,6 +102,49 @@ BOOST_VWAP_BEARISH_PUT = 1.08    # +8% boost for price < VWAP (put plays)
 BOOST_VIX_CONTEXT_MATCH = 1.10   # +10% boost for VIX-appropriate strategy
 BOOST_SECTOR_STRENGTH = 1.12     # +12% boost for strong sector
 
+# ============================================================================
+# HIGH-IV WATCHLIST - Fallback for Wheel Strategy
+# ============================================================================
+# Stocks with consistently high IV (good for premium selling)
+# Updated regularly based on market conditions
+HIGH_IV_WATCHLIST = [
+    # Large Cap Tech (high beta, liquid options)
+    'AAPL', 'MSFT', 'GOOGL', 'AMZN', 'META', 'TSLA', 'NVDA', 'AMD', 'NFLX',
+
+    # Financial Services (liquid, institutional grade)
+    'JPM', 'BAC', 'GS', 'MS', 'C', 'WFC', 'SCHW',
+
+    # Healthcare (stable, good premiums)
+    'JNJ', 'UNH', 'PFE', 'ABBV', 'TMO', 'ABT',
+
+    # Consumer (brand names, liquid)
+    'DIS', 'NKE', 'SBUX', 'MCD', 'HD', 'WMT', 'TGT',
+
+    # Energy (high IV during volatility)
+    'XOM', 'CVX', 'COP', 'SLB', 'EOG',
+
+    # Communication Services
+    'T', 'VZ', 'CMCSA',
+
+    # Industrial
+    'BA', 'CAT', 'GE', 'UPS', 'FDX',
+
+    # ETFs (very liquid options)
+    'SPY', 'QQQ', 'IWM', 'DIA', 'EEM', 'GLD', 'SLV', 'XLE', 'XLF', 'XLK',
+
+    # Meme/High Volatility (premium gold mines)
+    'GME', 'AMC', 'BBBY', 'PLTR', 'SNAP', 'HOOD', 'COIN', 'RIOT', 'MARA',
+
+    # Semiconductor (high IV sector)
+    'INTC', 'QCOM', 'AVGO', 'MU', 'TSM', 'ASML',
+
+    # EV & Clean Energy
+    'F', 'GM', 'LCID', 'RIVN', 'NIO', 'XPEV', 'ENPH', 'SEDG',
+
+    # Retail
+    'AMZN', 'ETSY', 'W', 'CHWY', 'CROX',
+]
+
 
 class ExpertMarketScanner:
     """
@@ -1035,7 +1078,7 @@ class ExpertMarketScanner:
         # SOURCE 1: Active stocks (most traded)
         try:
             url = f'{self.openbb.base_url}/equity/discovery/active'
-            response = requests.get(url, params={'provider': 'yfinance', 'limit': 30}, timeout=30)
+            response = requests.get(url, params={'provider': 'yfinance', 'limit': 100}, timeout=30)
             if response.status_code == 200:
                 results = response.json().get('results', [])
                 for stock in results:
@@ -1048,7 +1091,7 @@ class ExpertMarketScanner:
         # SOURCE 2: Unusual volume
         try:
             url = f'{self.openbb.base_url}/equity/screener'
-            response = requests.get(url, params={'provider': 'yfinance', 'signal': 'unusual_volume', 'limit': 30}, timeout=30)
+            response = requests.get(url, params={'provider': 'yfinance', 'signal': 'unusual_volume', 'limit': 100}, timeout=30)
             if response.status_code == 200:
                 results = response.json().get('results', [])
                 for stock in results:
@@ -1061,7 +1104,7 @@ class ExpertMarketScanner:
         # SOURCE 3: Top gainers
         try:
             url = f'{self.openbb.base_url}/equity/discovery/gainers'
-            response = requests.get(url, params={'provider': 'yfinance', 'limit': 25}, timeout=30)
+            response = requests.get(url, params={'provider': 'yfinance', 'limit': 50}, timeout=30)
             if response.status_code == 200:
                 results = response.json().get('results', [])
                 for stock in results:
@@ -1074,7 +1117,7 @@ class ExpertMarketScanner:
         # SOURCE 4: Top losers
         try:
             url = f'{self.openbb.base_url}/equity/discovery/losers'
-            response = requests.get(url, params={'provider': 'yfinance', 'limit': 25}, timeout=30)
+            response = requests.get(url, params={'provider': 'yfinance', 'limit': 50}, timeout=30)
             if response.status_code == 200:
                 results = response.json().get('results', [])
                 for stock in results:
@@ -1088,7 +1131,7 @@ class ExpertMarketScanner:
         # Use screener to find stocks with high volatility
         try:
             url = f'{self.openbb.base_url}/equity/screener'
-            response = requests.get(url, params={'provider': 'yfinance', 'signal': 'most_volatile', 'limit': 25}, timeout=30)
+            response = requests.get(url, params={'provider': 'yfinance', 'signal': 'most_volatile', 'limit': 50}, timeout=30)
             if response.status_code == 200:
                 results = response.json().get('results', [])
                 for stock in results:
@@ -1101,7 +1144,7 @@ class ExpertMarketScanner:
         # SOURCE 6: Oversold stocks (potential bounce plays)
         try:
             url = f'{self.openbb.base_url}/equity/screener'
-            response = requests.get(url, params={'provider': 'yfinance', 'signal': 'oversold', 'limit': 20}, timeout=30)
+            response = requests.get(url, params={'provider': 'yfinance', 'signal': 'oversold', 'limit': 30}, timeout=30)
             if response.status_code == 200:
                 results = response.json().get('results', [])
                 for stock in results:
@@ -1114,7 +1157,7 @@ class ExpertMarketScanner:
         # SOURCE 7: Overbought stocks (potential reversal plays)
         try:
             url = f'{self.openbb.base_url}/equity/screener'
-            response = requests.get(url, params={'provider': 'yfinance', 'signal': 'overbought', 'limit': 20}, timeout=30)
+            response = requests.get(url, params={'provider': 'yfinance', 'signal': 'overbought', 'limit': 30}, timeout=30)
             if response.status_code == 200:
                 results = response.json().get('results', [])
                 for stock in results:
@@ -1137,7 +1180,20 @@ class ExpertMarketScanner:
                 if new_source not in existing_source:
                     unique_stocks[symbol]['source'] = f"{existing_source},{new_source}"
 
-        logging.info(f"TIER 2.1: Total unique stocks in universe: {len(unique_stocks)}")
+        logging.info(f"TIER 2.1: Total unique stocks from API sources: {len(unique_stocks)}")
+
+        # FALLBACK: If API returned few/no stocks, use HIGH_IV_WATCHLIST
+        if len(unique_stocks) < 50:
+            logging.warning(f"TIER 2.1: API returned only {len(unique_stocks)} stocks, adding HIGH_IV_WATCHLIST as fallback")
+            for symbol in HIGH_IV_WATCHLIST:
+                if symbol not in unique_stocks:
+                    unique_stocks[symbol] = {
+                        'symbol': symbol,
+                        'source': 'high_iv_watchlist',
+                        'price': None  # Will be fetched later
+                    }
+            logging.info(f"TIER 2.1: Universe expanded to {len(unique_stocks)} stocks with watchlist")
+
         return list(unique_stocks.values())
 
     def _pre_filter_stocks(self, stocks: List[Dict]) -> List[Dict]:
