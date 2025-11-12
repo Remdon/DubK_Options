@@ -4,6 +4,47 @@ All notable changes to the Wheel Strategy implementation.
 
 ---
 
+## [2025-11-12] - Universe Expansion Fix
+
+### Added
+- **HIGH_IV_WATCHLIST**: 80+ high-quality stocks as fallback universe
+  - Includes: SPY, QQQ, IWM, AAPL, MSFT, GOOGL, TSLA, NVDA, AMD, JPM, BAC, etc.
+  - Covers all major sectors (Tech, Financial, Healthcare, Energy, Industrial, etc.)
+  - Activates automatically when OpenBB API returns < 50 stocks
+  - Ensures bot always has candidates to evaluate for Wheel strategy
+
+### Changed
+- **OpenBB API Limits**: Increased to fetch larger stock universe
+  - Active stocks: 30 → 100
+  - Unusual volume: 30 → 100
+  - Gainers: 25 → 50
+  - Losers: 25 → 50
+  - High volatility: 25 → 50
+  - Oversold: 20 → 30
+  - Overbought: 20 → 30
+  - **Max theoretical universe**: ~400 stocks (deduplicated to 200-250)
+
+### Why This Change Was Needed
+
+**Problem Observed**: Even after lowering IV threshold to 50%, bot STILL found zero candidates (2025-11-12 07:51 AM run)
+- No "TIER 2.1: Fetched X stocks" logs in output
+- OpenBB API discovery endpoints returning empty/minimal results
+- Scanner had no stocks to evaluate against Wheel criteria
+
+**Root Cause**: OpenBB API calls failing silently or returning insufficient data
+- User confirmed: Not using fixed lists, all dynamic from API
+- API endpoints may be rate-limited, unavailable, or returning errors
+- Without fallback, bot has zero opportunity to find trades
+
+**Solution**:
+1. Add HIGH_IV_WATCHLIST as guaranteed fallback universe (80+ symbols)
+2. Increase API limits to maximize stocks when API is working
+3. Automatic failover: If API < 50 stocks, use watchlist
+
+**Expected Result**: Bot should now find 5-15 Wheel candidates per scan
+
+---
+
 ## [2025-11-12] - Market Adaptation Fix
 
 ### Changed
@@ -20,17 +61,19 @@ All notable changes to the Wheel Strategy implementation.
 - 0/7 positions filled
 - Market was open and liquid
 
-**Root Cause**: IV Rank 60% threshold too strict for current low-volatility environment
+**Root Cause #1**: IV Rank 60% threshold too strict for current low-volatility environment
 - VIX estimated at 12-15 (very low)
 - Only ~15-20% of stocks have IV rank above 60% in low-vol markets
 - Combined with other filters (price, market cap, beta), pass rate was 0.36% = zero candidates
+
+**Root Cause #2** (discovered later): Scanner universe was empty (OpenBB API issue)
 
 **Solution**: Lower threshold to 50% (still conservative, expert-approved)
 - Increases eligible stock pool from 20% to 40%
 - Maintains profitability (15-30% annual returns expected)
 - More consistent with market volatility regime
 
-**Expected Result**: Bot should now find 2-5 candidates per scan in normal market conditions
+**Note**: This fix alone was insufficient - universe expansion (above) also required
 
 ---
 
