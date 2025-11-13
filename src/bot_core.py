@@ -1978,24 +1978,14 @@ Provide ONLY the formatted lines, one per symbol. No other text."""
                     else:
                         print(f"\n{Colors.SUCCESS}[MARKET OPEN]{Colors.RESET}")
 
-                    # CHECK FOR MANUAL REQUESTS (non-blocking)
-                    manual_scan, manual_portfolio = self.interactive_ui.check_manual_requests()
-
-                    # FIRST: Check and manage existing positions with exit rules (always OR manual request)
-                    if manual_portfolio:
-                        print(f"{Colors.HEADER}[MANUAL] Portfolio evaluation requested{Colors.RESET}")
-
+                    # FIRST: Check and manage existing positions with exit rules (scheduled)
                     self.position_manager.check_and_execute_exits()
 
-                    # SECOND: Display portfolio strategy summary (always OR manual request)
+                    # SECOND: Display portfolio strategy summary (scheduled)
                     self.display_portfolio_strategy_summary()
 
-                    # THIRD: Look for new Wheel opportunities with 30-min scheduled scans OR manual request
-                    if manual_scan:
-                        print(f"{Colors.HEADER}[MANUAL] Wheel scan requested - executing now{Colors.RESET}")
-                        self.execute_wheel_opportunities()
-                    else:
-                        self.execute_market_session(iteration)
+                    # THIRD: Look for new Wheel opportunities with 30-min scheduled scans
+                    self.execute_market_session(iteration)
 
                     sleep_time = 300  # 5 minutes between position checks
                 else:
@@ -2051,7 +2041,31 @@ Provide ONLY the formatted lines, one per symbol. No other text."""
                 # Display countdown timer while sleeping
                 # Print start message only - no updates to avoid UI clutter and scroll interference
                 print(f"{Colors.DIM}[*] Sleeping for {sleep_time}s until next check...{Colors.RESET}")
-                time.sleep(sleep_time)
+
+                # Interruptible sleep: Check for manual requests every second
+                for _ in range(sleep_time):
+                    time.sleep(1)
+
+                    # Check for manual requests - execute immediately without waiting
+                    manual_scan, manual_portfolio = self.interactive_ui.check_manual_requests()
+
+                    if manual_scan or manual_portfolio:
+                        print(f"\n{Colors.SUCCESS}[MANUAL] Interrupting sleep to execute user request{Colors.RESET}")
+
+                        if manual_portfolio:
+                            print(f"{Colors.HEADER}[MANUAL] Portfolio evaluation requested{Colors.RESET}")
+                            self.position_manager.check_and_execute_exits()
+                            self.display_portfolio_strategy_summary()
+
+                        if manual_scan:
+                            print(f"{Colors.HEADER}[MANUAL] Wheel scan requested - executing now{Colors.RESET}")
+                            self.execute_wheel_opportunities()
+
+                        print(f"{Colors.DIM}[*] Resuming scheduled operations...{Colors.RESET}")
+
+                    # Check for shutdown request
+                    if self.shutdown_requested:
+                        break
 
                 print()  # Add blank line after sleep
 
