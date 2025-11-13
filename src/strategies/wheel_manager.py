@@ -432,7 +432,7 @@ class WheelManager:
 
         # Get all active wheel positions from database
         cursor = self.conn.execute("""
-            SELECT id, underlying_symbol, state FROM wheel_positions
+            SELECT id, symbol, state FROM wheel_positions
             WHERE state != 'COMPLETED'
         """)
         db_positions = cursor.fetchall()
