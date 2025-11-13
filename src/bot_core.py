@@ -2043,13 +2043,14 @@ Provide ONLY the formatted lines, one per symbol. No other text."""
                 print(f"{Colors.DIM}[*] Sleeping for {sleep_time}s until next check...{Colors.RESET}")
 
                 # Interruptible sleep: Check for manual requests every second
-                for _ in range(sleep_time):
+                for elapsed in range(sleep_time):
                     time.sleep(1)
 
                     # Check for manual requests - execute immediately without waiting
                     manual_scan, manual_portfolio = self.interactive_ui.check_manual_requests()
 
                     if manual_scan or manual_portfolio:
+                        remaining = sleep_time - elapsed - 1
                         print(f"\n{Colors.SUCCESS}[MANUAL] Interrupting sleep to execute user request{Colors.RESET}")
 
                         if manual_portfolio:
@@ -2062,7 +2063,10 @@ Provide ONLY the formatted lines, one per symbol. No other text."""
                             print(f"{Colors.HEADER}[MANUAL] Wheel scan requested - executing now{Colors.RESET}")
                             self.execute_wheel_opportunities()
 
-                        print(f"{Colors.DIM}[*] Resuming scheduled operations...{Colors.RESET}")
+                        if remaining > 0:
+                            print(f"{Colors.DIM}[*] Resuming sleep for {remaining}s until next check...{Colors.RESET}")
+                        else:
+                            print(f"{Colors.DIM}[*] Sleep complete, continuing to next cycle...{Colors.RESET}")
 
                     # Check for shutdown request
                     if self.shutdown_requested:
