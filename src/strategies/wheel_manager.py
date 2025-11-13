@@ -420,15 +420,16 @@ class WheelManager:
                 'win_rate': float
             }
         """
-        # Active positions by state
+        # Active positions by state (exclude COMPLETED positions)
         cursor = self.conn.execute("""
             SELECT state, COUNT(*) as count, SUM(total_premium_collected) as premium
             FROM wheel_positions
+            WHERE state != 'COMPLETED'
             GROUP BY state
         """)
         state_counts = {row[0]: {'count': row[1], 'premium': row[2] or 0} for row in cursor.fetchall()}
 
-        # Total active positions
+        # Total active positions (only non-completed)
         active_positions = sum(s['count'] for s in state_counts.values())
 
         # Completed cycles
