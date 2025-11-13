@@ -241,7 +241,7 @@ class OptionsBot:
             self.trade_journal,
             self.multi_leg_order_manager,
             self.wheel_manager,  # Pass wheel_manager to skip exit checks for Wheel positions
-            self.config  # Pass config for Wheel profit target access
+            config  # Pass config for Wheel profit target access
         )
         logging.info(f"[POSITION MANAGER] Initialized with Wheel position protection")
 
