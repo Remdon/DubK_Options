@@ -403,6 +403,66 @@ class WheelManager:
         columns = [desc[0] for desc in cursor.description]
         return [dict(zip(columns, row)) for row in cursor.fetchall()]
 
+    def reconcile_with_broker(self, broker_positions: List) -> Dict:
+        """
+        Reconcile wheel database with actual broker positions.
+        Removes stale positions that no longer exist in broker account.
+
+        Args:
+            broker_positions: List of position objects from broker (Alpaca)
+
+        Returns:
+            {
+                'removed': int,  # Number of positions removed
+                'symbols_removed': List[str]  # Symbols that were removed
+            }
+        """
+        import logging
+
+        # Get all symbols from broker positions (extract underlying from options)
+        broker_symbols = set()
+        for pos in broker_positions:
+            symbol = pos.symbol
+            # Extract underlying from OCC format (e.g., "AAPL230616C00150000" -> "AAPL")
+            if len(symbol) > 15:  # Options format
+                underlying = symbol[:-15]
+            else:
+                underlying = symbol
+            broker_symbols.add(underlying)
+
+        # Get all active wheel positions from database
+        cursor = self.conn.execute("""
+            SELECT id, underlying_symbol, state FROM wheel_positions
+            WHERE state != 'COMPLETED'
+        """)
+        db_positions = cursor.fetchall()
+
+        # Find positions in database that don't exist in broker
+        symbols_to_remove = []
+        ids_to_remove = []
+        for wheel_id, underlying, state in db_positions:
+            if underlying not in broker_symbols:
+                symbols_to_remove.append(underlying)
+                ids_to_remove.append(wheel_id)
+                logging.warning(f"[WHEEL RECONCILE] {underlying} not found in broker - removing from database (was in state: {state})")
+
+        # Remove stale positions
+        for wheel_id in ids_to_remove:
+            self.conn.execute("""
+                DELETE FROM wheel_positions
+                WHERE id = ?
+            """, (wheel_id,))
+
+        self.conn.commit()
+
+        if len(symbols_to_remove) > 0:
+            logging.info(f"[WHEEL RECONCILE] Removed {len(symbols_to_remove)} stale position(s): {', '.join(symbols_to_remove)}")
+
+        return {
+            'removed': len(symbols_to_remove),
+            'symbols_removed': symbols_to_remove
+        }
+
     def get_wheel_stats(self) -> Dict:
         """
         Get overall wheel strategy statistics.

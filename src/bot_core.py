@@ -286,6 +286,15 @@ class OptionsBot:
         # Reconcile existing positions with strategy database
         self.reconcile_positions_on_startup()
 
+        # Reconcile wheel positions with broker (remove stale positions)
+        try:
+            positions = self.trading_client.list_positions()
+            reconcile_result = self.wheel_manager.reconcile_with_broker(positions)
+            if reconcile_result['removed'] > 0:
+                print(f"{Colors.SUCCESS}[WHEEL RECONCILE] Removed {reconcile_result['removed']} stale position(s) from database{Colors.RESET}")
+        except Exception as e:
+            logging.error(f"[WHEEL RECONCILE] Error reconciling positions: {e}")
+
     def setup_alpaca(self):
         """Initialize Alpaca trading client with account eligibility checking"""
         from alpaca.trading.client import TradingClient
