@@ -2054,6 +2054,7 @@ Provide ONLY the formatted lines, one per symbol. No other text."""
 
                         if manual_portfolio:
                             print(f"{Colors.HEADER}[MANUAL] Portfolio evaluation requested{Colors.RESET}")
+                            self.display_portfolio_summary()  # Show full portfolio status first
                             self.position_manager.check_and_execute_exits()
                             self.display_portfolio_strategy_summary()
 
