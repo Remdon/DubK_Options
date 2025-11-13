@@ -22,35 +22,42 @@ All notable changes to the Wheel Strategy implementation.
   - **Files Modified**: `src/bot_core.py` (line 244)
 
 ### Added
-- **Interactive UI for Manual Control** ✅ (Non-Blocking, Thread-Based)
+- **Interactive UI for Manual Control** ✅ (Non-Blocking, Thread-Based, IMMEDIATE Execution)
   - **What**: Real-time menu system for manual scan and portfolio evaluation
   - **Commands**:
-    - `s` - Trigger immediate Wheel scan (bypasses 30-min wait)
-    - `p` - Force portfolio evaluation and P&L check
+    - `s` - Trigger immediate Wheel scan (executes within 1 second)
+    - `p` - Force portfolio evaluation and P&L check (executes within 1 second)
     - `h` - Display current bot status (positions, premium collected, account value)
-    - `q` - Graceful shutdown
+    - `q` - Graceful shutdown (executes within 1 second)
     - `ENTER` - Show interactive menu
   - **How it Works**:
     - Runs in separate daemon thread (non-blocking)
     - Checks for user input every 100ms without disrupting bot flow
-    - Sets flags checked by main loop on next cycle
+    - **Interruptible Sleep**: Bot sleeps in 1-second increments, checking for manual requests each second
+    - **Immediate Execution**: When command detected, interrupts sleep, executes, then resumes schedule
+    - Sets flags checked by sleep loop every 1 second
     - Cross-platform (Windows: msvcrt, Unix: select)
   - **Display**: Shows automated steps in background while accepting user input
-  - **Location**: `src/ui/interactive_ui.py`
+  - **Location**: `src/ui/interactive_ui.py`, `src/bot_core.py` (lines 2051-2080)
 
 ### Impact
 - **User Control**: Can trigger scans/evaluations on-demand without waiting
-- **Non-Disruptive**: Commands execute on next bot cycle (no interruption of automated flow)
+- **Immediate Response**: Commands execute within 1 second (no more waiting for next cycle)
+- **Non-Disruptive**: Scheduled bot operations continue exactly on time (unchanged)
 - **Visibility**: See bot status, positions, and P&L in real-time with 'h' command
 - **Graceful Exit**: 'q' command allows clean shutdown with final stats
+- **Example**: Market closed (sleeping 3600s) → User presses 'p' at 10 seconds → Portfolio evaluates immediately → Resumes sleep for remaining 3590s
 
 ### Files Modified
 - `src/risk/position_manager.py`: Added config parameter (line 32, 37)
-- `src/bot_core.py`: Pass config to PositionManager + integrate InteractiveUI (lines 52, 243, 267, 1951, 1982-1997, 2062)
+- `src/bot_core.py`:
+  - Pass config to PositionManager (line 244 - fixed)
+  - Integrate InteractiveUI (lines 52, 267, 1951, 2062)
+  - Interruptible sleep with immediate execution (lines 1981-1990, 2051-2080)
 - `src/ui/interactive_ui.py`: New file - interactive command processor
 - `src/ui/__init__.py`: New file - UI module exports
 
-**Expected Result**: Bot displays "[MANUAL] Wheel scan requested" when 's' pressed, executes on next cycle
+**Expected Result**: Bot displays "[MANUAL] Interrupting sleep to execute user request" when 's' or 'p' pressed, executes within 1 second
 
 ---
 
