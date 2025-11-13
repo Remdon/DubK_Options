@@ -7,12 +7,19 @@ All notable changes to the Wheel Strategy implementation.
 ## [2025-11-12] - Critical Bugfix + Interactive UI
 
 ### Fixed
-- **CRITICAL**: PositionManager config attribute error (Line 392)
+- **CRITICAL #1**: PositionManager config attribute error (Line 392)
   - **Problem**: AttributeError: 'PositionManager' object has no attribute 'config'
   - **Root Cause**: PositionManager.__init__ didn't accept or store config parameter
   - **Impact**: Wheel profit-taking logic crashed on startup, preventing exit management
   - **Fix**: Added config parameter to PositionManager and passed from bot_core.py
   - **Files Modified**: `src/risk/position_manager.py`, `src/bot_core.py`
+
+- **CRITICAL #2**: OptionsBot config attribute error on startup (Line 244)
+  - **Problem**: AttributeError: 'OptionsBot' object has no attribute 'config'
+  - **Root Cause**: Line 244 referenced `self.config` but __init__ never assigns it (config is module-level import)
+  - **Impact**: Bot crashed immediately on startup before any operations could execute
+  - **Fix**: Changed line 244 from `self.config` to `config` (module import)
+  - **Files Modified**: `src/bot_core.py` (line 244)
 
 ### Added
 - **Interactive UI for Manual Control** ✅ (Non-Blocking, Thread-Based)
