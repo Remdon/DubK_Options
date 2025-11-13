@@ -288,7 +288,7 @@ class OptionsBot:
 
         # Reconcile wheel positions with broker (remove stale positions)
         try:
-            positions = self.trading_client.list_positions()
+            positions = self.trading_client.get_all_positions()
             reconcile_result = self.wheel_manager.reconcile_with_broker(positions)
             if reconcile_result['removed'] > 0:
                 print(f"{Colors.SUCCESS}[WHEEL RECONCILE] Removed {reconcile_result['removed']} stale position(s) from database{Colors.RESET}")
