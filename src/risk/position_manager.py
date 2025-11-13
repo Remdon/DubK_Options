@@ -29,11 +29,12 @@ def extract_underlying_symbol(full_symbol: str) -> str:
 class PositionManager:
     """Manages position exits with stop losses and profit targets"""
 
-    def __init__(self, trading_client, trade_journal, multi_leg_manager=None, wheel_manager=None):
+    def __init__(self, trading_client, trade_journal, multi_leg_manager=None, wheel_manager=None, config=None):
         self.trading_client = trading_client
         self.journal = trade_journal
         self.multi_leg_manager = multi_leg_manager  # For closing spreads atomically
         self.wheel_manager = wheel_manager  # For checking if position is part of Wheel strategy
+        self.config = config  # Configuration object for accessing Wheel parameters
 
         # FIXED: Issue #6 - Strategy-specific stop losses
         # Exit rules (defaults)

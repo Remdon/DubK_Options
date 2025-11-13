@@ -4,6 +4,49 @@ All notable changes to the Wheel Strategy implementation.
 
 ---
 
+## [2025-11-12] - Critical Bugfix + Interactive UI
+
+### Fixed
+- **CRITICAL**: PositionManager config attribute error (Line 392)
+  - **Problem**: AttributeError: 'PositionManager' object has no attribute 'config'
+  - **Root Cause**: PositionManager.__init__ didn't accept or store config parameter
+  - **Impact**: Wheel profit-taking logic crashed on startup, preventing exit management
+  - **Fix**: Added config parameter to PositionManager and passed from bot_core.py
+  - **Files Modified**: `src/risk/position_manager.py`, `src/bot_core.py`
+
+### Added
+- **Interactive UI for Manual Control** ✅ (Non-Blocking, Thread-Based)
+  - **What**: Real-time menu system for manual scan and portfolio evaluation
+  - **Commands**:
+    - `s` - Trigger immediate Wheel scan (bypasses 30-min wait)
+    - `p` - Force portfolio evaluation and P&L check
+    - `h` - Display current bot status (positions, premium collected, account value)
+    - `q` - Graceful shutdown
+    - `ENTER` - Show interactive menu
+  - **How it Works**:
+    - Runs in separate daemon thread (non-blocking)
+    - Checks for user input every 100ms without disrupting bot flow
+    - Sets flags checked by main loop on next cycle
+    - Cross-platform (Windows: msvcrt, Unix: select)
+  - **Display**: Shows automated steps in background while accepting user input
+  - **Location**: `src/ui/interactive_ui.py`
+
+### Impact
+- **User Control**: Can trigger scans/evaluations on-demand without waiting
+- **Non-Disruptive**: Commands execute on next bot cycle (no interruption of automated flow)
+- **Visibility**: See bot status, positions, and P&L in real-time with 'h' command
+- **Graceful Exit**: 'q' command allows clean shutdown with final stats
+
+### Files Modified
+- `src/risk/position_manager.py`: Added config parameter (line 32, 37)
+- `src/bot_core.py`: Pass config to PositionManager + integrate InteractiveUI (lines 52, 243, 267, 1951, 1982-1997, 2062)
+- `src/ui/interactive_ui.py`: New file - interactive command processor
+- `src/ui/__init__.py`: New file - UI module exports
+
+**Expected Result**: Bot displays "[MANUAL] Wheel scan requested" when 's' pressed, executes on next cycle
+
+---
+
 ## [2025-11-12] - Institutional Enhancements: Profit Taking + Risk Controls
 
 ### Added

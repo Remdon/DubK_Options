@@ -49,6 +49,7 @@ from src.strategies import (
     WheelStrategy, WheelManager, WheelState
 )
 from src.order_management import ReplacementAnalyzer, BatchOrderManager
+from src.ui.interactive_ui import InteractiveUI
 from src.utils.validators import (
     validate_contract_liquidity, get_contract_price,
     calculate_dynamic_limit_price, validate_grok_response,
@@ -239,7 +240,8 @@ class OptionsBot:
             self.trading_client,
             self.trade_journal,
             self.multi_leg_order_manager,
-            self.wheel_manager  # Pass wheel_manager to skip exit checks for Wheel positions
+            self.wheel_manager,  # Pass wheel_manager to skip exit checks for Wheel positions
+            self.config  # Pass config for Wheel profit target access
         )
         logging.info(f"[POSITION MANAGER] Initialized with Wheel position protection")
 
@@ -260,6 +262,10 @@ class OptionsBot:
         # Rolling lists for continuous scanning during market hours
         self.rolling_top_50 = []  # Top 50 candidates from OpenBB scans (free API)
         self.rolling_top_25 = []  # Top 25 candidates after Grok analysis (expensive API)
+
+        # Interactive UI for manual control
+        self.interactive_ui = InteractiveUI(self)
+        self.shutdown_requested = False  # Graceful shutdown flag
         self.last_openbb_scan_time = None
         self.last_grok_analysis_time = None
         self.last_position_grok_check = None  # Track last Grok position review
@@ -1941,8 +1947,16 @@ Provide ONLY the formatted lines, one per symbol. No other text."""
         iteration = 0
         last_daily_summary = None
 
+        # Start interactive UI
+        self.interactive_ui.start()
+
         try:
             while True:
+                # Check for shutdown request
+                if self.shutdown_requested:
+                    print(f"\n{Colors.WARNING}[SHUTDOWN] Graceful shutdown in progress...{Colors.RESET}")
+                    break
+
                 iteration += 1
 
                 # Log daily summary once per day
@@ -1964,14 +1978,24 @@ Provide ONLY the formatted lines, one per symbol. No other text."""
                     else:
                         print(f"\n{Colors.SUCCESS}[MARKET OPEN]{Colors.RESET}")
 
-                    # FIRST: Check and manage existing positions with exit rules
+                    # CHECK FOR MANUAL REQUESTS (non-blocking)
+                    manual_scan, manual_portfolio = self.interactive_ui.check_manual_requests()
+
+                    # FIRST: Check and manage existing positions with exit rules (always OR manual request)
+                    if manual_portfolio:
+                        print(f"{Colors.HEADER}[MANUAL] Portfolio evaluation requested{Colors.RESET}")
+
                     self.position_manager.check_and_execute_exits()
 
-                    # SECOND: Display portfolio strategy summary
+                    # SECOND: Display portfolio strategy summary (always OR manual request)
                     self.display_portfolio_strategy_summary()
 
-                    # THIRD: Look for new Wheel opportunities with 30-min scheduled scans
-                    self.execute_market_session(iteration)
+                    # THIRD: Look for new Wheel opportunities with 30-min scheduled scans OR manual request
+                    if manual_scan:
+                        print(f"{Colors.HEADER}[MANUAL] Wheel scan requested - executing now{Colors.RESET}")
+                        self.execute_wheel_opportunities()
+                    else:
+                        self.execute_market_session(iteration)
 
                     sleep_time = 300  # 5 minutes between position checks
                 else:
@@ -2033,6 +2057,9 @@ Provide ONLY the formatted lines, one per symbol. No other text."""
 
         except KeyboardInterrupt:
             print(f"\n{Colors.WARNING}[!] Shutting down gracefully...{Colors.RESET}")
+
+            # Stop interactive UI
+            self.interactive_ui.stop()
 
             # Show final performance stats
             stats = self.trade_journal.get_performance_stats(days=30)
