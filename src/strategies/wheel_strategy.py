@@ -506,15 +506,22 @@ class WheelStrategy:
             return None
 
     def calculate_position_size(self, symbol: str, put_strike: float, account_value: float,
-                               existing_wheel_positions: int) -> int:
+                               existing_wheel_positions: int, wheel_manager=None) -> int:
         """
-        Calculate how many put contracts to sell based on capital and limits.
+        Calculate how many put contracts to sell based on capital, limits, and win rate.
+
+        Dynamic sizing based on historical performance:
+        - High performers (70%+ win rate): 16-18% capital allocation
+        - Average performers (50-70% win rate): 14% capital allocation (baseline)
+        - Low performers (<50% win rate): 10-12% capital allocation
+        - New symbols (no history): 14% capital allocation (baseline)
 
         Args:
             symbol: Stock symbol
             put_strike: Put strike price
             account_value: Total account value
             existing_wheel_positions: Number of existing wheel positions
+            wheel_manager: WheelManager instance for performance data (optional)
 
         Returns:
             Number of contracts to sell (0 if position limit reached)
@@ -524,8 +531,50 @@ class WheelStrategy:
             logging.warning(f"[WHEEL] {symbol}: Maximum wheel positions ({self.MAX_WHEEL_POSITIONS}) reached")
             return 0
 
-        # Calculate max capital for this position (percentage of account)
-        max_capital = account_value * self.MAX_CAPITAL_PER_WHEEL
+        # BASE CAPITAL ALLOCATION: 14% (baseline)
+        base_capital_pct = self.MAX_CAPITAL_PER_WHEEL
+
+        # DYNAMIC SIZING: Adjust based on historical win rate
+        capital_pct = base_capital_pct  # Default to baseline
+
+        if wheel_manager:
+            performance = wheel_manager.get_symbol_performance(symbol)
+
+            if performance and performance['trades_total'] >= 3:  # Need at least 3 trades for reliability
+                win_rate = performance['win_rate']
+                quality_score = performance['quality_score']
+
+                # Win rate-based capital allocation
+                if win_rate >= 70.0:
+                    # High performer: 16-18% allocation
+                    capital_pct = 0.16 + (min(win_rate, 90) - 70) / 100  # 16-18%
+                    sizing_reason = f"HIGH WIN RATE ({win_rate:.1f}%)"
+                elif win_rate >= 50.0:
+                    # Average performer: 14-15% allocation
+                    capital_pct = 0.14 + (win_rate - 50) / 500  # 14-15%
+                    sizing_reason = f"AVERAGE WIN RATE ({win_rate:.1f}%)"
+                else:
+                    # Low performer: 10-12% allocation
+                    capital_pct = 0.10 + (win_rate / 250)  # 10-12%
+                    sizing_reason = f"LOW WIN RATE ({win_rate:.1f}%)"
+
+                # Further adjust by quality score
+                quality_multiplier = 0.8 + (quality_score / 500)  # 0.8 to 1.0
+                capital_pct *= quality_multiplier
+
+                # Cap at reasonable limits
+                capital_pct = max(0.10, min(capital_pct, 0.18))  # 10-18% range
+
+                logging.info(f"[WHEEL] {symbol}: Dynamic sizing - {sizing_reason}, " +
+                           f"quality {quality_score:.1f}/100 → {capital_pct*100:.1f}% capital allocation")
+            else:
+                sizing_reason = "NEW SYMBOL (no history)"
+                logging.info(f"[WHEEL] {symbol}: {sizing_reason} → {capital_pct*100:.1f}% capital allocation (baseline)")
+        else:
+            logging.info(f"[WHEEL] {symbol}: Static sizing → {capital_pct*100:.1f}% capital allocation")
+
+        # Calculate max capital for this position
+        max_capital = account_value * capital_pct
 
         # Each contract requires cash securing 100 shares at strike price
         capital_per_contract = put_strike * 100
@@ -548,3 +597,139 @@ class WheelStrategy:
                        f"(${actual_capital:,.2f} capital = {pct_of_account:.1f}% of account)")
 
         return contracts
+
+    def select_covered_call(self, symbol: str, min_strike: float,
+                           current_price: float, shares_owned: int) -> Optional[Dict]:
+        """
+        Select best covered call option for assigned stock.
+
+        Finds call options that:
+        - Strike >= min_strike (typically 5% above cost basis)
+        - DTE in 21-60 range (same as puts)
+        - Good liquidity and premium
+        - Maximize annual return
+
+        Args:
+            symbol: Stock symbol
+            min_strike: Minimum call strike (e.g., cost basis * 1.05)
+            current_price: Current stock price
+            shares_owned: Number of shares owned (determines contract quantity)
+
+        Returns:
+            Dict with call option details or None if no suitable call found
+        """
+        try:
+            logging.info(f"[WHEEL] {symbol}: Finding covered call (min strike ${min_strike:.2f})")
+
+            # Get options chain
+            chain = self.market_data.get_options_chain(symbol)
+            if not chain:
+                logging.warning(f"[WHEEL] {symbol}: No options chain available")
+                return None
+
+            # Filter for calls only
+            calls = [opt for opt in chain if opt.get('type') == 'call']
+
+            if not calls:
+                logging.warning(f"[WHEEL] {symbol}: No call options in chain")
+                return None
+
+            # Filter by DTE range (same as puts: 21-60 days)
+            valid_calls = []
+            for call in calls:
+                expiration_str = call.get('expiration')
+                if not expiration_str:
+                    continue
+
+                # Parse expiration and calculate DTE
+                try:
+                    exp_date = datetime.strptime(expiration_str, '%Y-%m-%d')
+                    dte = (exp_date - datetime.now()).days
+
+                    if dte < self.MIN_DTE or dte > self.MAX_DTE:
+                        continue
+
+                    # Filter by strike (must be >= min_strike)
+                    strike = call.get('strike', 0)
+                    if strike < min_strike:
+                        continue
+
+                    # Filter by liquidity (same as puts)
+                    volume = call.get('volume', 0)
+                    open_interest = call.get('open_interest', 0)
+                    if volume < 10 and open_interest < 100:
+                        continue
+
+                    # Get premium
+                    bid = call.get('bid', 0)
+                    ask = call.get('ask', 0)
+                    mid_price = (bid + ask) / 2 if bid and ask else 0
+
+                    if mid_price <= 0:
+                        continue
+
+                    # Calculate annual return
+                    contracts = shares_owned // 100
+                    total_premium = mid_price * contracts * 100
+                    capital_at_risk = strike * shares_owned  # Stock value if called away
+                    annual_return = ((total_premium / capital_at_risk) * (365 / dte)) * 100 if capital_at_risk > 0 else 0
+
+                    # Store call with scoring data
+                    call['premium'] = mid_price
+                    call['dte'] = dte
+                    call['annual_return'] = annual_return
+                    call['liquidity_score'] = volume + (open_interest / 10)
+
+                    valid_calls.append(call)
+
+                except Exception as e:
+                    logging.debug(f"[WHEEL] {symbol}: Error parsing call option: {e}")
+                    continue
+
+            if not valid_calls:
+                logging.warning(f"[WHEEL] {symbol}: No calls found meeting criteria " +
+                              f"(min strike ${min_strike:.2f}, DTE {self.MIN_DTE}-{self.MAX_DTE})")
+                return None
+
+            # Score and rank calls
+            # Priority: 1) Annual return (50%), 2) Strike price closer to min (30%), 3) Liquidity (20%)
+            for call in valid_calls:
+                strike = call.get('strike', 0)
+                strike_distance = abs(strike - min_strike) / min_strike  # Prefer strikes closer to min
+
+                # Normalize scores (0-100 scale)
+                return_score = min(call['annual_return'], 100)  # Cap at 100%
+                strike_score = max(0, 100 - (strike_distance * 100))  # Closer to min = higher score
+                liquidity_score = min(call['liquidity_score'] / 10, 100)  # Normalize
+
+                # Weighted composite score
+                call['composite_score'] = (
+                    return_score * 0.50 +
+                    strike_score * 0.30 +
+                    liquidity_score * 0.20
+                )
+
+            # Sort by composite score
+            valid_calls.sort(key=lambda x: x['composite_score'], reverse=True)
+
+            # Select best call
+            best_call = valid_calls[0]
+
+            logging.info(f"[WHEEL] {symbol}: Selected covered call - " +
+                       f"${best_call['strike']:.2f} strike, {best_call['dte']} DTE, " +
+                       f"${best_call['premium']:.2f} premium, {best_call['annual_return']:.1f}% annual return")
+
+            return {
+                'symbol': best_call.get('option_symbol', ''),
+                'strike': best_call['strike'],
+                'expiration': best_call.get('expiration', ''),
+                'premium': best_call['premium'],
+                'dte': best_call['dte'],
+                'annual_return': best_call['annual_return']
+            }
+
+        except Exception as e:
+            logging.error(f"[WHEEL] {symbol}: Error selecting covered call: {e}")
+            import traceback
+            traceback.print_exc()
+            return None

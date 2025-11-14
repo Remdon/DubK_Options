@@ -217,9 +217,29 @@ class PositionManager:
                             processed_symbols.add(position.symbol)
                             continue
                         else:
-                            # Hold position - no exit criteria met
-                            logging.info(f"  → WHEEL POSITION: {underlying} in state {wheel_position['state']} - HOLDING until expiration/assignment")
-                            print(f"  {Colors.INFO}[WHEEL] {underlying}: Holding position (P&L: {unrealized_pl_pct:+.1%}, expires {wheel_position.get('current_expiration', 'N/A')}){Colors.RESET}")
+                            # Hold position - show progress toward profit targets
+                            profit_to_50pct = wheel_profit_target - unrealized_pl_pct
+                            profit_to_21dte = 0.25 - unrealized_pl_pct if dte and dte <= 21 else None
+
+                            # Build status message
+                            status_parts = []
+                            if unrealized_pl_pct > 0:
+                                status_parts.append(f"P&L: {Colors.SUCCESS}{unrealized_pl_pct:+.1%}{Colors.RESET}")
+                                status_parts.append(f"(need {profit_to_50pct:.1%} more for 50% target)")
+                            else:
+                                status_parts.append(f"P&L: {Colors.WARNING}{unrealized_pl_pct:+.1%}{Colors.RESET}")
+
+                            if dte:
+                                status_parts.append(f"{dte} DTE")
+                                if dte <= 21 and profit_to_21dte and profit_to_21dte > 0:
+                                    status_parts.append(f"(need {profit_to_21dte:.1%} more for 21 DTE exit)")
+                                elif dte <= 21:
+                                    status_parts.append(f"({Colors.SUCCESS}21 DTE threshold met, holding for assignment{Colors.RESET})")
+
+                            status_msg = " | ".join(status_parts)
+
+                            logging.info(f"  → WHEEL POSITION: {underlying} in state {wheel_position['state']} - HOLDING")
+                            print(f"  {Colors.INFO}[WHEEL] {underlying}: Holding | {status_msg}{Colors.RESET}")
                             processed_symbols.add(position.symbol)
                             continue
 
@@ -576,6 +596,35 @@ class PositionManager:
                 # Remove from active position tracking
                 underlying = extract_underlying_symbol(symbol)
                 self.journal.remove_active_position(underlying)
+
+                # Update symbol performance if this was a Wheel position
+                if self.wheel_manager:
+                    wheel_pos = self.wheel_manager.get_wheel_position(underlying)
+                    if wheel_pos:
+                        # Calculate trade metrics
+                        unrealized_pl = float(position.unrealized_pl) if position.unrealized_pl is not None else 0.0
+                        unrealized_pl_pct = float(position.unrealized_plpc) if position.unrealized_plpc is not None else 0.0
+                        was_winner = unrealized_pl > 0
+
+                        # Calculate hold days
+                        entry_date_str = wheel_pos.get('current_entry_date')
+                        if entry_date_str:
+                            try:
+                                entry_date = datetime.fromisoformat(entry_date_str)
+                                hold_days = (datetime.now() - entry_date).days
+                            except:
+                                hold_days = 0
+                        else:
+                            hold_days = 0
+
+                        # Update performance tracking
+                        self.wheel_manager.update_symbol_performance(
+                            symbol=underlying,
+                            profit=unrealized_pl,
+                            roi_pct=unrealized_pl_pct * 100,
+                            hold_days=hold_days,
+                            was_winner=was_winner
+                        )
 
                 return True
 

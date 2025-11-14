@@ -126,6 +126,38 @@ class WheelManager:
             )
         """)
 
+        # Symbol performance tracking (for dynamic position sizing)
+        self.conn.execute("""
+            CREATE TABLE IF NOT EXISTS symbol_performance (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                symbol TEXT NOT NULL UNIQUE,
+
+                -- Performance metrics
+                trades_total INTEGER DEFAULT 0,
+                trades_won INTEGER DEFAULT 0,
+                trades_lost INTEGER DEFAULT 0,
+                win_rate REAL DEFAULT 0.0,
+
+                -- Profit tracking
+                total_profit REAL DEFAULT 0.0,
+                avg_profit_per_trade REAL DEFAULT 0.0,
+                avg_roi_pct REAL DEFAULT 0.0,
+
+                -- Risk metrics
+                max_drawdown REAL DEFAULT 0.0,
+                consecutive_losses INTEGER DEFAULT 0,
+                max_consecutive_losses INTEGER DEFAULT 0,
+
+                -- Timing
+                avg_hold_days REAL DEFAULT 0.0,
+                last_trade_date TEXT,
+                updated_at TEXT NOT NULL,
+
+                -- Quality score (0-100)
+                quality_score REAL DEFAULT 50.0
+            )
+        """)
+
         self.conn.commit()
         logging.info("[WHEEL_MANAGER] Database tables created/verified")
 
@@ -625,6 +657,397 @@ class WheelManager:
                 return True
 
         return False
+
+    def update_symbol_performance(self, symbol: str, profit: float, roi_pct: float,
+                                  hold_days: int, was_winner: bool) -> None:
+        """
+        Update symbol performance metrics after a trade closes.
+
+        Args:
+            symbol: Stock symbol
+            profit: Total profit/loss from the trade
+            roi_pct: Return on investment percentage
+            hold_days: Number of days position was held
+            was_winner: True if trade was profitable
+        """
+        try:
+            # Get existing performance or create new
+            cursor = self.conn.execute("""
+                SELECT id, trades_total, trades_won, trades_lost, total_profit,
+                       consecutive_losses, max_consecutive_losses, avg_hold_days
+                FROM symbol_performance
+                WHERE symbol = ?
+            """, (symbol,))
+
+            row = cursor.fetchone()
+
+            now = datetime.now().isoformat()
+
+            if row:
+                # Update existing record
+                perf_id, trades_total, trades_won, trades_lost, total_profit, \
+                    consecutive_losses, max_consecutive_losses, avg_hold_days = row
+
+                new_trades_total = trades_total + 1
+                new_trades_won = trades_won + (1 if was_winner else 0)
+                new_trades_lost = trades_lost + (0 if was_winner else 1)
+                new_total_profit = total_profit + profit
+
+                # Update consecutive losses
+                if was_winner:
+                    new_consecutive_losses = 0
+                else:
+                    new_consecutive_losses = consecutive_losses + 1
+                    max_consecutive_losses = max(max_consecutive_losses, new_consecutive_losses)
+
+                # Calculate updated metrics
+                new_win_rate = (new_trades_won / new_trades_total) * 100 if new_trades_total > 0 else 0
+                new_avg_profit = new_total_profit / new_trades_total if new_trades_total > 0 else 0
+
+                # Weighted average hold days (give more weight to recent trades)
+                new_avg_hold_days = (avg_hold_days * 0.7 + hold_days * 0.3) if avg_hold_days > 0 else hold_days
+
+                # Calculate quality score (0-100)
+                # Factors: win rate (40%), avg profit (30%), consistency (20%), recency (10%)
+                win_rate_score = new_win_rate  # Already 0-100
+                profit_score = min(max(new_avg_profit / 100, 0), 100)  # Normalize to 0-100
+                consistency_score = max(0, 100 - (max_consecutive_losses * 20))  # Penalize losing streaks
+                recency_bonus = 10 if was_winner else 0  # Bonus for recent win
+
+                quality_score = (
+                    win_rate_score * 0.40 +
+                    profit_score * 0.30 +
+                    consistency_score * 0.20 +
+                    recency_bonus * 0.10
+                )
+
+                self.conn.execute("""
+                    UPDATE symbol_performance
+                    SET trades_total = ?,
+                        trades_won = ?,
+                        trades_lost = ?,
+                        win_rate = ?,
+                        total_profit = ?,
+                        avg_profit_per_trade = ?,
+                        consecutive_losses = ?,
+                        max_consecutive_losses = ?,
+                        avg_hold_days = ?,
+                        last_trade_date = ?,
+                        updated_at = ?,
+                        quality_score = ?
+                    WHERE symbol = ?
+                """, (new_trades_total, new_trades_won, new_trades_lost, new_win_rate,
+                     new_total_profit, new_avg_profit, new_consecutive_losses,
+                     max_consecutive_losses, new_avg_hold_days, now, now, quality_score, symbol))
+
+                logging.info(f"[PERFORMANCE] {symbol}: Updated - " +
+                           f"{new_trades_won}/{new_trades_total} wins ({new_win_rate:.1f}%), " +
+                           f"quality score: {quality_score:.1f}/100")
+
+            else:
+                # Create new record
+                trades_total = 1
+                trades_won = 1 if was_winner else 0
+                trades_lost = 0 if was_winner else 1
+                win_rate = 100.0 if was_winner else 0.0
+                consecutive_losses = 0 if was_winner else 1
+                max_consecutive_losses = consecutive_losses
+
+                # Initial quality score
+                quality_score = 70.0 if was_winner else 30.0
+
+                self.conn.execute("""
+                    INSERT INTO symbol_performance (
+                        symbol, trades_total, trades_won, trades_lost, win_rate,
+                        total_profit, avg_profit_per_trade, consecutive_losses,
+                        max_consecutive_losses, avg_hold_days, last_trade_date,
+                        updated_at, quality_score
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """, (symbol, trades_total, trades_won, trades_lost, win_rate,
+                     profit, profit, consecutive_losses, max_consecutive_losses,
+                     hold_days, now, now, quality_score))
+
+                logging.info(f"[PERFORMANCE] {symbol}: Created - " +
+                           f"first trade {'WON' if was_winner else 'LOST'}, quality score: {quality_score:.1f}/100")
+
+            self.conn.commit()
+
+        except Exception as e:
+            logging.error(f"[PERFORMANCE] {symbol}: Error updating performance: {e}")
+            import traceback
+            traceback.print_exc()
+
+    def get_symbol_performance(self, symbol: str) -> Optional[Dict]:
+        """
+        Get performance metrics for a symbol.
+
+        Returns:
+            Dict with performance metrics or None if no data
+        """
+        try:
+            cursor = self.conn.execute("""
+                SELECT trades_total, trades_won, trades_lost, win_rate,
+                       total_profit, avg_profit_per_trade, avg_roi_pct,
+                       max_drawdown, consecutive_losses, max_consecutive_losses,
+                       avg_hold_days, last_trade_date, quality_score
+                FROM symbol_performance
+                WHERE symbol = ?
+            """, (symbol,))
+
+            row = cursor.fetchone()
+
+            if row:
+                return {
+                    'trades_total': row[0],
+                    'trades_won': row[1],
+                    'trades_lost': row[2],
+                    'win_rate': row[3],
+                    'total_profit': row[4],
+                    'avg_profit_per_trade': row[5],
+                    'avg_roi_pct': row[6],
+                    'max_drawdown': row[7],
+                    'consecutive_losses': row[8],
+                    'max_consecutive_losses': row[9],
+                    'avg_hold_days': row[10],
+                    'last_trade_date': row[11],
+                    'quality_score': row[12]
+                }
+
+            return None
+
+        except Exception as e:
+            logging.error(f"[PERFORMANCE] {symbol}: Error fetching performance: {e}")
+            return None
+
+    def check_for_assignments(self, trading_client) -> List[str]:
+        """
+        Check if any short puts have been assigned (now own stock).
+
+        This method detects when a short put position results in stock ownership,
+        automatically transitioning the wheel position to ASSIGNED state and
+        preparing to sell covered calls.
+
+        Args:
+            trading_client: Alpaca trading client to fetch current positions
+
+        Returns:
+            List of symbols that were assigned and transitioned
+        """
+        assigned_symbols = []
+
+        try:
+            # Get all current positions from broker
+            all_positions = trading_client.get_all_positions()
+
+            # Identify stock positions (non-option symbols)
+            stock_positions = [p for p in all_positions if len(p.symbol) <= 6]  # Stock symbols are typically short
+
+            for stock_pos in stock_positions:
+                symbol = stock_pos.symbol
+                shares_owned = int(stock_pos.qty) if stock_pos.qty else 0
+
+                # Only process long stock positions (positive quantity)
+                if shares_owned <= 0:
+                    continue
+
+                # Check if we have an active wheel position in SELLING_PUTS state
+                wheel_pos = self.get_wheel_position(symbol)
+
+                if wheel_pos and wheel_pos['state'] == WheelState.SELLING_PUTS.value:
+                    # ASSIGNMENT DETECTED!
+                    logging.info(f"[WHEEL ASSIGNMENT] {symbol} - Put was assigned, now own {shares_owned} shares")
+
+                    # Calculate cost basis: strike price - premium per share
+                    strike = wheel_pos['current_strike']
+                    put_premium = wheel_pos['put_premium_collected']
+                    premium_per_share = put_premium / shares_owned if shares_owned > 0 else 0
+                    cost_basis = strike - premium_per_share
+
+                    logging.info(f"[WHEEL ASSIGNMENT] {symbol} - Cost basis: ${cost_basis:.2f}/share " +
+                               f"(strike ${strike:.2f} - ${premium_per_share:.2f} premium)")
+
+                    # Update database: SELLING_PUTS → ASSIGNED
+                    self.conn.execute("""
+                        UPDATE wheel_positions
+                        SET state = ?,
+                            shares_owned = ?,
+                            stock_cost_basis = ?,
+                            current_option_symbol = NULL,
+                            updated_at = ?
+                        WHERE symbol = ?
+                    """, (WheelState.ASSIGNED.value, shares_owned, cost_basis,
+                         datetime.now().isoformat(), symbol))
+
+                    # Log the assignment transaction
+                    self._log_transaction(
+                        wheel_id=wheel_pos['id'],
+                        transaction_type='ASSIGNMENT',
+                        symbol=symbol,
+                        action='PUT_ASSIGNED',
+                        quantity=shares_owned,
+                        premium=0,  # No new premium, just state change
+                        state_before=WheelState.SELLING_PUTS.value,
+                        state_after=WheelState.ASSIGNED.value,
+                        notes=f"Put assigned at ${strike:.2f}, cost basis ${cost_basis:.2f}/share"
+                    )
+
+                    self.conn.commit()
+                    assigned_symbols.append(symbol)
+
+                    logging.info(f"[WHEEL ASSIGNMENT] {symbol} - Transitioned to ASSIGNED state, ready for covered calls")
+
+        except Exception as e:
+            logging.error(f"[WHEEL_MANAGER] Error checking for assignments: {e}")
+            import traceback
+            traceback.print_exc()
+
+        return assigned_symbols
+
+    def sell_covered_call(self, symbol: str, trading_client, wheel_strategy) -> bool:
+        """
+        Automatically sell covered call on assigned stock.
+
+        Called when a wheel position is in ASSIGNED state to transition to
+        SELLING_CALLS state by selling a call option above cost basis.
+
+        Args:
+            symbol: Stock symbol
+            trading_client: Alpaca trading client for order execution
+            wheel_strategy: WheelStrategy instance for option selection
+
+        Returns:
+            True if covered call successfully sold
+        """
+        try:
+            # Get wheel position
+            wheel_pos = self.get_wheel_position(symbol)
+            if not wheel_pos:
+                logging.error(f"[WHEEL_MANAGER] {symbol}: No wheel position found")
+                return False
+
+            if wheel_pos['state'] != WheelState.ASSIGNED.value:
+                logging.error(f"[WHEEL_MANAGER] {symbol}: Not in ASSIGNED state (current: {wheel_pos['state']})")
+                return False
+
+            shares_owned = wheel_pos['shares_owned']
+            cost_basis = wheel_pos['stock_cost_basis']
+
+            if not shares_owned or shares_owned <= 0:
+                logging.error(f"[WHEEL_MANAGER] {symbol}: No shares owned")
+                return False
+
+            logging.info(f"[WHEEL_MANAGER] {symbol}: Selecting covered call (cost basis ${cost_basis:.2f})")
+
+            # Get current stock price
+            from src.data.market_data import MarketDataClient
+            market_data = MarketDataClient()
+            quote = market_data.get_quote(symbol)
+
+            if not quote:
+                logging.error(f"[WHEEL_MANAGER] {symbol}: Could not fetch quote")
+                return False
+
+            current_price = quote.get('last_price', 0)
+
+            # Calculate target call strike (5% above cost basis, from config)
+            target_strike_multiplier = 1.05  # 5% above cost basis
+            min_call_strike = cost_basis * target_strike_multiplier
+
+            logging.info(f"[WHEEL_MANAGER] {symbol}: Current price ${current_price:.2f}, " +
+                       f"seeking call strike ≥ ${min_call_strike:.2f}")
+
+            # Use wheel_strategy to find best covered call
+            call_option = wheel_strategy.select_covered_call(
+                symbol=symbol,
+                min_strike=min_call_strike,
+                current_price=current_price,
+                shares_owned=shares_owned
+            )
+
+            if not call_option:
+                logging.warning(f"[WHEEL_MANAGER] {symbol}: No suitable covered call found")
+                return False
+
+            # Extract call details
+            call_symbol = call_option['symbol']
+            call_strike = call_option['strike']
+            call_expiration = call_option['expiration']
+            call_premium = call_option['premium']
+            call_qty = shares_owned // 100  # 1 contract per 100 shares
+
+            if call_qty <= 0:
+                logging.error(f"[WHEEL_MANAGER] {symbol}: Not enough shares for 1 contract ({shares_owned} shares)")
+                return False
+
+            total_premium = call_premium * call_qty * 100
+
+            logging.info(f"[WHEEL_MANAGER] {symbol}: Selling {call_qty} covered call(s) " +
+                       f"${call_strike:.2f} strike, exp {call_expiration}, premium ${call_premium:.2f}")
+
+            # Place the order
+            from alpaca.trading.requests import OrderRequest
+            from alpaca.trading.enums import OrderSide, OrderType, TimeInForce
+
+            order_request = OrderRequest(
+                symbol=call_symbol,
+                qty=call_qty,
+                side=OrderSide.SELL,
+                type=OrderType.LIMIT,
+                time_in_force=TimeInForce.DAY,
+                limit_price=call_premium
+            )
+
+            order = trading_client.submit_order(order_request)
+
+            if order:
+                logging.info(f"[WHEEL_MANAGER] {symbol}: Covered call order placed - Order ID: {order.id}")
+
+                # Update database: ASSIGNED → SELLING_CALLS
+                self.conn.execute("""
+                    UPDATE wheel_positions
+                    SET state = ?,
+                        current_option_symbol = ?,
+                        current_strike = ?,
+                        current_expiration = ?,
+                        current_premium = ?,
+                        current_entry_date = ?,
+                        call_premium_collected = call_premium_collected + ?,
+                        total_premium_collected = total_premium_collected + ?,
+                        updated_at = ?
+                    WHERE symbol = ?
+                """, (WheelState.SELLING_CALLS.value, call_symbol, call_strike, call_expiration,
+                     total_premium, datetime.now().isoformat(), total_premium, total_premium,
+                     datetime.now().isoformat(), symbol))
+
+                # Log the transaction
+                self._log_transaction(
+                    wheel_id=wheel_pos['id'],
+                    transaction_type='COVERED_CALL',
+                    symbol=symbol,
+                    action='SELL_CALL',
+                    quantity=call_qty,
+                    premium=total_premium,
+                    state_before=WheelState.ASSIGNED.value,
+                    state_after=WheelState.SELLING_CALLS.value,
+                    option_symbol=call_symbol,
+                    strike=call_strike,
+                    expiration=call_expiration,
+                    notes=f"Sold {call_qty} covered call(s) at ${call_strike:.2f} strike, ${call_premium:.2f} premium"
+                )
+
+                self.conn.commit()
+
+                logging.info(f"[WHEEL_MANAGER] {symbol}: Transitioned to SELLING_CALLS state")
+                return True
+            else:
+                logging.error(f"[WHEEL_MANAGER] {symbol}: Failed to place covered call order")
+                return False
+
+        except Exception as e:
+            logging.error(f"[WHEEL_MANAGER] {symbol}: Error selling covered call: {e}")
+            import traceback
+            traceback.print_exc()
+            return False
 
     def close(self):
         """Close database connection"""

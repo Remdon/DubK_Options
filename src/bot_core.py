@@ -1990,6 +1990,23 @@ Provide ONLY the formatted lines, one per symbol. No other text."""
                     # FIRST: Check and manage existing positions with exit rules (scheduled)
                     self.position_manager.check_and_execute_exits()
 
+                    # ASSIGNMENT DETECTION: Check if any short puts were assigned
+                    if self.wheel_manager:
+                        assigned_symbols = self.wheel_manager.check_for_assignments(self.trading_client)
+
+                        # Automatically sell covered calls on newly assigned stocks
+                        for symbol in assigned_symbols:
+                            logging.info(f"[WHEEL] {symbol}: Assignment detected, initiating covered call sale")
+                            success = self.wheel_manager.sell_covered_call(
+                                symbol=symbol,
+                                trading_client=self.trading_client,
+                                wheel_strategy=self.wheel_strategy
+                            )
+                            if success:
+                                print(f"{Colors.SUCCESS}[WHEEL ASSIGNMENT] {symbol}: Covered call successfully sold{Colors.RESET}")
+                            else:
+                                print(f"{Colors.WARNING}[WHEEL ASSIGNMENT] {symbol}: Failed to sell covered call (will retry next cycle){Colors.RESET}")
+
                     # SECOND: Display portfolio strategy summary (scheduled)
                     self.display_portfolio_strategy_summary()
 
@@ -2066,6 +2083,22 @@ Provide ONLY the formatted lines, one per symbol. No other text."""
                             print(f"{Colors.HEADER}[MANUAL] Portfolio evaluation requested{Colors.RESET}")
                             self.display_portfolio_summary()  # Show full portfolio status first
                             self.position_manager.check_and_execute_exits()
+
+                            # Check for assignments during manual portfolio evaluation
+                            if self.wheel_manager:
+                                assigned_symbols = self.wheel_manager.check_for_assignments(self.trading_client)
+                                for symbol in assigned_symbols:
+                                    logging.info(f"[WHEEL] {symbol}: Assignment detected, initiating covered call sale")
+                                    success = self.wheel_manager.sell_covered_call(
+                                        symbol=symbol,
+                                        trading_client=self.trading_client,
+                                        wheel_strategy=self.wheel_strategy
+                                    )
+                                    if success:
+                                        print(f"{Colors.SUCCESS}[WHEEL ASSIGNMENT] {symbol}: Covered call successfully sold{Colors.RESET}")
+                                    else:
+                                        print(f"{Colors.WARNING}[WHEEL ASSIGNMENT] {symbol}: Failed to sell covered call{Colors.RESET}")
+
                             self.display_portfolio_strategy_summary()
 
                         if manual_scan:
@@ -3842,12 +3875,13 @@ Example: AAPL|EXIT|Stock momentum reversed, exit signal"""
                 # Update active position count for sizing (includes positions filled this scan)
                 current_positions = active_positions + positions_filled
 
-                # Calculate position size
+                # Calculate position size (with dynamic sizing based on win rate)
                 contracts = self.wheel_strategy.calculate_position_size(
                     symbol=symbol,
                     put_strike=put_details['strike'],
                     account_value=account_value,
-                    existing_wheel_positions=current_positions
+                    existing_wheel_positions=current_positions,
+                    wheel_manager=self.wheel_manager
                 )
 
                 if contracts == 0:
