@@ -87,9 +87,19 @@ class GrokDataFetcher:
 
         logging.info("[GROK] Fetching unusual options activity from free sources...")
 
-        prompt = f"""You are a financial data API. Fetch TODAY's unusual options activity from free public sources (Barchart.com unusual activity page, MarketBeat unusual options, or Finviz screener).
+        prompt = f"""SEARCH THE WEB RIGHT NOW for today's unusual options activity. Visit these sites and extract real data:
 
-IMPORTANT: Return ONLY valid JSON, no explanations or markdown. Use this EXACT format:
+1. https://www.barchart.com/options/unusual-activity
+2. https://www.marketbeat.com/originals/unusual-options-activity/
+3. https://finviz.com/ (screener with unusual volume)
+4. Search X/Twitter for "#unusualoptions" or "unusual options activity" posts from today
+
+Extract the ACTUAL unusual options trades being reported TODAY. Look for:
+- Large block trades (premium > ${min_premium:,})
+- Option sweeps (aggressive multi-exchange orders)
+- High volume relative to open interest
+
+Return ONLY valid JSON with REAL data you find, no explanations or markdown:
 
 {{
   "results": [
@@ -107,10 +117,11 @@ IMPORTANT: Return ONLY valid JSON, no explanations or markdown. Use this EXACT f
 
 Requirements:
 - Only include trades with total premium > ${min_premium:,}
-- Classify sentiment as "BULLISH" (calls/bullish puts) or "BEARISH" (puts/bearish calls)
-- Include volume and open_interest (estimate if not available)
-- trade_type should be "sweep", "block", or "unknown"
-- Return empty results array if no data available: {{"results": []}}
+- Classify sentiment as "BULLISH" (calls) or "BEARISH" (puts)
+- Include actual volume and open_interest from the sources
+- trade_type: "sweep", "block", or "unknown"
+- If you find NO unusual activity today, return: {{"results": []}}
+- DO NOT make up data - only return what you actually find on the web
 - DO NOT include any text outside the JSON structure"""
 
         try:
@@ -156,9 +167,20 @@ Requirements:
         today = datetime.now().strftime('%Y-%m-%d')
         end_date = (datetime.now() + timedelta(days=upcoming_days)).strftime('%Y-%m-%d')
 
-        prompt = f"""You are a financial data API. Fetch upcoming earnings dates from {today} to {end_date} from free public sources (Yahoo Finance earnings calendar, MarketBeat earnings, or Nasdaq earnings calendar).
+        prompt = f"""SEARCH THE WEB RIGHT NOW for upcoming earnings announcements from {today} to {end_date}. Visit these sites and extract real data:
 
-IMPORTANT: Return ONLY valid JSON, no explanations or markdown. Use this EXACT format:
+1. https://finance.yahoo.com/calendar/earnings (most comprehensive free source)
+2. https://www.marketbeat.com/earnings/ (detailed earnings calendar)
+3. https://www.nasdaq.com/market-activity/earnings (official NASDAQ calendar)
+4. Search X/Twitter for earnings announcements and company IR pages
+
+Extract the ACTUAL earnings dates being reported for the next {upcoming_days} days. Look for:
+- Major companies (market cap > $2B)
+- Confirmed earnings dates
+- Timing (before market/after market/during market)
+- EPS estimates if available
+
+Return ONLY valid JSON with REAL data you find on the web:
 
 {{
   "results": [
@@ -174,10 +196,12 @@ IMPORTANT: Return ONLY valid JSON, no explanations or markdown. Use this EXACT f
 
 Requirements:
 - Only include symbols with market cap > $2 billion
-- report_time must be "BMO" (before market open), "AMC" (after market close), or "UNKNOWN"
-- Include eps_estimate and revenue_estimate if available (use null if not available)
-- Return empty results array if no earnings in date range: {{"results": []}}
-- DO NOT include any text outside the JSON structure"""
+- report_time: "BMO" (before market open), "AMC" (after market close), or "UNKNOWN"
+- Include eps_estimate and revenue_estimate from analyst consensus (null if not available)
+- If you find NO earnings in the date range, return: {{"results": []}}
+- DO NOT make up data - only return what you actually find on the web
+- DO NOT include any text outside the JSON structure
+- Focus on US stocks (NYSE, NASDAQ)"""
 
         try:
             response_data = self._call_grok_api(prompt)
