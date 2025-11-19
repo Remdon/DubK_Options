@@ -215,7 +215,7 @@ Requirements:
         }
 
         payload = {
-            'model': 'grok-2-1212',  # Use grok-2-1212 (latest stable model with web access)
+            'model': 'grok-4-fast-non-reasoning',  # Grok 4 Fast (2M context, web search, cost-efficient)
             'messages': [{'role': 'user', 'content': prompt}],
             'max_tokens': 4000,
             'temperature': 0.3  # Low temperature for factual data extraction
