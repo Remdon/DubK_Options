@@ -105,6 +105,7 @@ class ModularOptionsBot:
 
 def print_modular_banner():
     """Display information about the fully modular architecture"""
+    # Pre-calculate padding to account for ANSI color codes
     banner = f"""{Fore.CYAN}{Style.BRIGHT}
 ╔═══════════════════════════════════════════════════════════════════════════════╗
 ║                                                                               ║
@@ -115,19 +116,19 @@ def print_modular_banner():
 ║   ██████╔╝╚██████╔╝██████╔╝██║  ██╗   ╚██████╔╝██║        ██║   ██║╚██████╔╝ ║
 ║   ╚═════╝  ╚═════╝ ╚═════╝ ╚═╝  ╚═╝    ╚═════╝ ╚═╝        ╚═╝   ╚═╝ ╚═════╝  ║
 ║                                                                               ║
-║                        {Fore.YELLOW}🎯 AUTONOMOUS TRADING BOT v4.0 🎯{Fore.CYAN}                         ║
+║                   {Fore.YELLOW}🎯 AUTONOMOUS TRADING BOT v4.0 🎯{Fore.CYAN}                              ║
 ║                                                                               ║
-║   {Fore.GREEN}Strategy 1:{Fore.WHITE} Wheel Strategy      {Fore.CYAN}│ {Fore.GREEN}Strategy 2:{Fore.WHITE} Bull Put Spreads{Fore.CYAN}          ║
-║   {Fore.WHITE}├─ Win Rate: 50-95%          {Fore.CYAN}│ {Fore.WHITE}├─ Win Rate: 65-75%{Fore.CYAN}              ║
-║   {Fore.WHITE}├─ Annual Return: 15-40%     {Fore.CYAN}│ {Fore.WHITE}├─ Annual Return: 15-30%{Fore.CYAN}         ║
-║   {Fore.WHITE}└─ Capital: $96K (Main)      {Fore.CYAN}│ {Fore.WHITE}└─ Capital: $10K (Spread){Fore.CYAN}        ║
+║   {Fore.GREEN}Strategy 1:{Fore.WHITE} Wheel Strategy         {Fore.CYAN}│  {Fore.GREEN}Strategy 2:{Fore.WHITE} Bull Put Spreads       {Fore.CYAN}║
+║   {Fore.WHITE}├─ Win Rate: 50-95%             {Fore.CYAN}│  {Fore.WHITE}├─ Win Rate: 65-75%           {Fore.CYAN}║
+║   {Fore.WHITE}├─ Annual Return: 15-40%        {Fore.CYAN}│  {Fore.WHITE}├─ Annual Return: 15-30%      {Fore.CYAN}║
+║   {Fore.WHITE}└─ Capital: $96K (Main)         {Fore.CYAN}│  {Fore.WHITE}└─ Capital: $10K (Spread)     {Fore.CYAN}║
 ║                                                                               ║
-║   {Fore.MAGENTA}🛡️  RISK MANAGEMENT FEATURES{Fore.CYAN}                                               ║
-║   {Fore.WHITE}✓ Deep ITM Detection & Stop Loss (-200% ROI){Fore.CYAN}                             ║
-║   {Fore.WHITE}✓ Sector Diversification (Max 2 per sector){Fore.CYAN}                             ║
-║   {Fore.WHITE}✓ Dynamic Position Sizing (Win Rate Adaptive){Fore.CYAN}                           ║
-║   {Fore.WHITE}✓ Consecutive Loss Protection{Fore.CYAN}                                           ║
-║   {Fore.WHITE}✓ Real-time Position Monitoring (Every 5 min){Fore.CYAN}                           ║
+║   {Fore.MAGENTA}🛡️  RISK MANAGEMENT FEATURES{Fore.CYAN}                                                    ║
+║   {Fore.WHITE}✓ Deep ITM Detection & Stop Loss (-200% ROI)                          {Fore.CYAN}║
+║   {Fore.WHITE}✓ Sector Diversification (Max 2 per sector)                          {Fore.CYAN}║
+║   {Fore.WHITE}✓ Dynamic Position Sizing (Win Rate Adaptive)                        {Fore.CYAN}║
+║   {Fore.WHITE}✓ Consecutive Loss Protection                                        {Fore.CYAN}║
+║   {Fore.WHITE}✓ Real-time Position Monitoring (Every 5 min)                        {Fore.CYAN}║
 ║                                                                               ║
 ╚═══════════════════════════════════════════════════════════════════════════════╝
 {Style.RESET_ALL}"""
