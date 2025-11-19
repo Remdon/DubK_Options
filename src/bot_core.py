@@ -3948,6 +3948,16 @@ Example: AAPL|EXIT|Stock momentum reversed, exit signal"""
                     self._manage_existing_wheel_position(existing_position)
                     continue  # Try next candidate
 
+                # NEW: Check sector diversification limits (prevent concentration risk like 40% EV exposure)
+                if not self.wheel_strategy.can_add_symbol_by_sector(symbol, self.wheel_manager):
+                    print(f"\n{Colors.WARNING}[WHEEL] {symbol}: Sector limit reached, skipping to maintain diversification{Colors.RESET}")
+                    continue  # Try next candidate
+
+                # NEW: Check for consecutive losses on this symbol (prevent revenge trading)
+                if not self.wheel_strategy.check_consecutive_losses(symbol, self.wheel_manager):
+                    print(f"\n{Colors.WARNING}[WHEEL] {symbol}: Too many consecutive losses, pausing entries{Colors.RESET}")
+                    continue  # Try next candidate
+
                 # Get the optimal put to sell
                 put_details = self.wheel_strategy.get_put_to_sell(symbol)
                 if not put_details:
@@ -4060,6 +4070,11 @@ Example: AAPL|EXIT|Stock momentum reversed, exit signal"""
                 print(f"{Colors.INFO}[SPREAD] Evaluating: {symbol} - {candidate['annual_return']:.1f}% annual return{Colors.RESET}")
                 print(f"  Short ${candidate['short_strike']:.2f} / Long ${candidate['long_strike']:.2f}")
                 print(f"  Credit: ${candidate['credit']:.2f}, Max Risk: ${candidate['max_risk']:.0f}, ROI: {candidate['roi']:.1f}%")
+
+                # NEW: Check sector diversification limits
+                if not self.spread_strategy.can_add_symbol_by_sector(symbol, self.spread_manager):
+                    print(f"{Colors.WARNING}[SPREAD] {symbol}: Sector limit reached, skipping to maintain diversification{Colors.RESET}\n")
+                    continue  # Try next candidate
 
                 # Calculate position size
                 spread_account = self.spread_trading_client.get_account()
@@ -4249,8 +4264,40 @@ Example: AAPL|EXIT|Stock momentum reversed, exit signal"""
                 print(f"{Colors.DIM}[WHEEL] {symbol}: Currently selling calls (${position['total_premium_collected']:.2f} total premium){Colors.RESET}")
 
             elif state == WheelState.SELLING_PUTS.value:
-                # Already selling puts, check if we should sell another after expiration
+                # Already selling puts, check for deep ITM or stop loss conditions
                 print(f"{Colors.DIM}[WHEEL] {symbol}: Currently selling puts (${position['total_premium_collected']:.2f} total premium){Colors.RESET}")
+
+                # NEW: Get current stock price and put premium for risk checks
+                try:
+                    quote = self.market_data.get_stock_quote(symbol)
+                    current_stock_price = float(quote.get('latestPrice', 0)) if quote else 0
+
+                    # Get current put value
+                    put_symbol = position.get('option_symbol', '')
+                    current_put_premium = 0
+
+                    if put_symbol:
+                        try:
+                            put_position = self.trading_client.get_open_position(put_symbol)
+                            if put_position:
+                                current_put_premium = abs(float(put_position.market_value)) / (position.get('contracts', 1) * 100)
+                        except Exception as e:
+                            logging.debug(f"[WHEEL] {symbol}: Could not get current put value: {e}")
+
+                    # NEW: Check for deep ITM condition (>$1.00 ITM)
+                    if current_stock_price > 0 and self.wheel_strategy.should_roll_deep_itm_put(position, current_stock_price):
+                        print(f"{Colors.ERROR}[WHEEL] {symbol}: PUT IS DEEP ITM - Should consider rolling down/out or closing{Colors.RESET}")
+                        logging.warning(f"[WHEEL] {symbol}: Deep ITM put detected - manual intervention may be needed")
+                        # TODO: Implement automatic rolling logic in future enhancement
+
+                    # NEW: Check for stop loss (-200% ROI)
+                    if current_put_premium > 0 and self.wheel_strategy.should_stop_loss_put(position, current_put_premium):
+                        print(f"{Colors.ERROR}[WHEEL] {symbol}: STOP LOSS TRIGGERED - Position losing 2x the premium collected{Colors.RESET}")
+                        logging.error(f"[WHEEL] {symbol}: Stop loss triggered - manual intervention required to close position")
+                        # TODO: Implement automatic position closing in future enhancement
+
+                except Exception as e:
+                    logging.debug(f"[WHEEL] {symbol}: Error checking ITM/stop loss conditions: {e}")
 
         except Exception as e:
             logging.error(f"[WHEEL] {symbol}: Error managing existing position: {e}", exc_info=True)

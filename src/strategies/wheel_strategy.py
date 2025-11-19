@@ -505,6 +505,161 @@ class WheelStrategy:
             logging.error(f"[WHEEL] {symbol}: Error finding call to sell: {e}")
             return None
 
+    # =========================================================================
+    # RISK MANAGEMENT METHODS (Added Nov 2025 based on live trade analysis)
+    # =========================================================================
+
+    def get_symbol_sector(self, symbol: str) -> str:
+        """
+        Get sector classification for a symbol.
+
+        Args:
+            symbol: Stock symbol
+
+        Returns:
+            Sector name (e.g., 'EV', 'TECH', 'FINANCE') or 'OTHER'
+        """
+        for sector, symbols in self.config.SECTORS.items():
+            if symbol in symbols:
+                return sector
+        return 'OTHER'
+
+    def can_add_symbol_by_sector(self, symbol: str, wheel_manager) -> bool:
+        """
+        Check if adding this symbol would violate sector diversification limits.
+
+        Prevents concentration risk (e.g., 40% in EV sector causing 84% of losses).
+
+        Args:
+            symbol: Symbol to check
+            wheel_manager: WheelManager instance to get current positions
+
+        Returns:
+            True if symbol can be added, False if sector limit reached
+        """
+        sector = self.get_symbol_sector(symbol)
+
+        # Get current wheel positions
+        all_positions = wheel_manager.get_all_positions()
+
+        # Count positions in this sector
+        sector_count = sum(1 for pos in all_positions
+                         if self.get_symbol_sector(pos['symbol']) == sector)
+
+        if sector_count >= self.config.MAX_SECTOR_POSITIONS:
+            logging.warning(f"[WHEEL] {symbol}: Sector '{sector}' limit reached "
+                          f"({sector_count}/{self.config.MAX_SECTOR_POSITIONS} positions)")
+            return False
+
+        return True
+
+    def should_roll_deep_itm_put(self, position: Dict, current_stock_price: float) -> bool:
+        """
+        Check if put is deep ITM and should be rolled down/out.
+
+        Deep ITM positions can cause runaway losses (e.g., XPEV -$1,565 loss).
+        Roll to a lower strike to reduce risk and collect additional credit.
+
+        Args:
+            position: Wheel position dict from wheel_manager
+            current_stock_price: Current stock price
+
+        Returns:
+            True if should roll, False otherwise
+        """
+        # Only check puts in SELLING_PUTS state
+        if position['state'] != 'SELLING_PUTS':
+            return False
+
+        put_strike = position.get('put_strike', 0)
+        if put_strike == 0:
+            return False
+
+        # Calculate intrinsic value (how far ITM)
+        intrinsic_value = put_strike - current_stock_price
+
+        # If put is >$1.00 ITM, consider rolling
+        if intrinsic_value > self.config.WHEEL_DEEP_ITM_THRESHOLD:
+            logging.warning(f"[WHEEL] {position['symbol']}: Put is ${intrinsic_value:.2f} ITM "
+                          f"(strike ${put_strike:.2f}, stock ${current_stock_price:.2f}) - Consider rolling")
+            return True
+
+        return False
+
+    def should_stop_loss_put(self, position: Dict, current_premium: float) -> bool:
+        """
+        Check if put hit max loss threshold.
+
+        Stop loss at -200% ROI prevents disasters like XPEV (-228% ROI).
+
+        Args:
+            position: Wheel position dict
+            current_premium: Current market value of put
+
+        Returns:
+            True if stop loss triggered, False otherwise
+        """
+        entry_premium = position.get('total_premium_collected', 0)
+        if entry_premium == 0:
+            return False
+
+        # Calculate unrealized P&L
+        # For short puts: P&L = premium collected - current value
+        unrealized_pnl = entry_premium - (current_premium * 100)
+        roi = (unrealized_pnl / entry_premium) if entry_premium > 0 else 0
+
+        # Stop loss at -200% ROI (lost 2x the premium)
+        if roi <= self.config.WHEEL_STOP_LOSS_PCT:
+            logging.error(f"[WHEEL] {position['symbol']}: STOP LOSS TRIGGERED "
+                        f"(ROI: {roi:.1%}, loss: ${abs(unrealized_pnl):.0f})")
+            return True
+
+        return False
+
+    def get_dynamic_position_multiplier(self, wheel_manager) -> float:
+        """
+        Reduce position sizing when overall win rate drops.
+
+        Adapts to market regime - reduces risk during losing streaks.
+
+        Returns:
+            Multiplier: 1.0 (full size) to 0.5 (half size)
+        """
+        stats = wheel_manager.get_wheel_stats()
+        win_rate = stats.get('win_rate', 100.0)
+
+        if win_rate >= self.config.MIN_WIN_RATE_FOR_FULL_SIZE * 100:
+            return 1.0  # Full size
+        elif win_rate >= 50.0:
+            return 0.75  # 75% size (defensive)
+        else:
+            return 0.5  # 50% size (very defensive)
+
+    def check_consecutive_losses(self, symbol: str, wheel_manager) -> bool:
+        """
+        Check if symbol has too many consecutive losses.
+
+        Prevents revenge trading - pauses after 2 consecutive losses.
+
+        Args:
+            symbol: Symbol to check
+            wheel_manager: WheelManager instance
+
+        Returns:
+            True if OK to trade, False if should pause
+        """
+        performance = wheel_manager.get_symbol_performance(symbol)
+
+        if performance:
+            consecutive_losses = performance.get('consecutive_losses', 0)
+
+            if consecutive_losses >= self.config.MAX_CONSECUTIVE_LOSSES:
+                logging.warning(f"[WHEEL] {symbol}: {consecutive_losses} consecutive losses - "
+                              f"PAUSING new entries until streak breaks")
+                return False
+
+        return True
+
     def calculate_position_size(self, symbol: str, put_strike: float, account_value: float,
                                existing_wheel_positions: int, wheel_manager=None) -> int:
         """
@@ -583,9 +738,19 @@ class WheelStrategy:
         max_contracts = int(max_capital / capital_per_contract)
 
         # Use full allocated capital (not just 1 contract!)
-        # Cap at reasonable limit to avoid over-concentration
-        MAX_CONTRACTS_PER_POSITION = 10  # Safety limit
-        contracts = min(max_contracts, MAX_CONTRACTS_PER_POSITION)
+        # Cap at reasonable limit to avoid over-concentration (reduced from 10 to 3 based on live trade analysis)
+        contracts = min(max_contracts, self.config.MAX_CONTRACTS_PER_SYMBOL)
+
+        # Apply dynamic multiplier based on overall portfolio win rate
+        if wheel_manager:
+            multiplier = self.get_dynamic_position_multiplier(wheel_manager)
+            if multiplier < 1.0:
+                original_contracts = contracts
+                contracts = max(1, int(contracts * multiplier))
+                logging.warning(f"[WHEEL] {symbol}: Dynamic sizing reduced contracts from "
+                              f"{original_contracts} to {contracts} (multiplier {multiplier:.2f})")
+
+        contracts = min(max_contracts, contracts)
 
         if contracts == 0:
             logging.warning(f"[WHEEL] {symbol}: Insufficient capital for wheel position "

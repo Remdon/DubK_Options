@@ -403,6 +403,44 @@ class BullPutSpreadStrategy:
 
         return closest
 
+    def get_symbol_sector(self, symbol: str) -> str:
+        """
+        Get sector classification for a symbol.
+        Uses same sector map as Wheel strategy for consistency.
+        """
+        for sector, symbols in self.config.SECTORS.items():
+            if symbol in symbols:
+                return sector
+        return 'OTHER'
+
+    def can_add_symbol_by_sector(self, symbol: str, spread_manager) -> bool:
+        """
+        Check if adding this symbol would violate sector diversification limits.
+
+        Prevents concentration risk like 40% in one sector.
+        Uses same MAX_SECTOR_POSITIONS limit as Wheel strategy.
+
+        Args:
+            symbol: Stock symbol to check
+            spread_manager: SpreadManager instance for current positions
+
+        Returns:
+            True if symbol can be added without violating sector limits
+        """
+        sector = self.get_symbol_sector(symbol)
+
+        # Get current spread positions in this sector
+        all_positions = spread_manager.get_all_positions()
+        sector_count = sum(1 for pos in all_positions
+                          if self.get_symbol_sector(pos['symbol']) == sector)
+
+        if sector_count >= self.config.MAX_SECTOR_POSITIONS:
+            logging.warning(f"[SPREAD] {symbol}: Sector '{sector}' limit reached "
+                          f"({sector_count}/{self.config.MAX_SECTOR_POSITIONS} positions)")
+            return False
+
+        return True
+
     def calculate_position_size(self, spread: Dict, available_capital: float) -> int:
         """
         Calculate number of contracts for this spread.

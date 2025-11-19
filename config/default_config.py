@@ -82,7 +82,28 @@ class Config:
 
         # Wheel exit rules (for short options)
         self.WHEEL_PROFIT_TARGET_PCT = float(os.getenv('WHEEL_PROFIT_TARGET_PCT', '0.50'))  # Close at 50% profit
-        self.WHEEL_STOP_LOSS_PCT = float(os.getenv('WHEEL_STOP_LOSS_PCT', '-2.00'))  # Stop at -200% (let assignment happen)
+        self.WHEEL_STOP_LOSS_PCT = float(os.getenv('WHEEL_STOP_LOSS_PCT', '-2.00'))  # Stop at -200% (lost 2x premium)
+
+        # Wheel risk management (NEW - Based on live trade analysis Nov 2025)
+        self.WHEEL_DEEP_ITM_THRESHOLD = float(os.getenv('WHEEL_DEEP_ITM_THRESHOLD', '1.00'))  # Roll if >$1.00 ITM
+        self.MAX_CONTRACTS_PER_SYMBOL = int(os.getenv('MAX_CONTRACTS_PER_SYMBOL', '3'))  # Reduced from 5
+        self.MAX_SECTOR_POSITIONS = int(os.getenv('MAX_SECTOR_POSITIONS', '2'))  # Max 2 positions per sector
+        self.MIN_WIN_RATE_FOR_FULL_SIZE = float(os.getenv('MIN_WIN_RATE_FOR_FULL_SIZE', '0.70'))  # 70% win rate
+        self.MAX_CONSECUTIVE_LOSSES = int(os.getenv('MAX_CONSECUTIVE_LOSSES', '2'))  # Pause after 2 losses
+
+        # Sector classifications for diversification
+        self.SECTORS = {
+            'EV': ['XPEV', 'NIO', 'RIVN', 'LCID', 'TSLA'],
+            'AUTO': ['F', 'GM', 'TX', 'MIR'],
+            'TECH': ['AAPL', 'MSFT', 'NVDA', 'AMD', 'GOOGL', 'META', 'AMZN'],
+            'SEMIS': ['INTC', 'MU', 'TSM', 'ASML', 'GFS', 'AVGO'],
+            'FINANCE': ['JPM', 'BAC', 'WFC', 'SLM', 'C', 'GS', 'MS'],
+            'TELECOM': ['T', 'VZ', 'CMCSA', 'TMUS'],
+            'STAPLES': ['KO', 'PEP', 'WMT', 'TGT', 'COST', 'PG'],
+            'ENERGY': ['XOM', 'CVX', 'COP', 'SLB'],
+            'HEALTHCARE': ['JNJ', 'UNH', 'PFE', 'ABBV', 'MRK'],
+            'RETAIL': ['HD', 'LOW', 'NKE', 'SBUX', 'CART'],
+        }
 
         # =====================================================================
         # BULL PUT SPREAD STRATEGY CONFIGURATION
