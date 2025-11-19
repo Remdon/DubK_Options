@@ -215,7 +215,7 @@ Requirements:
         }
 
         payload = {
-            'model': 'grok-beta',  # Use grok-beta for web access
+            'model': 'grok-2-1212',  # Use grok-2-1212 (latest stable model with web access)
             'messages': [{'role': 'user', 'content': prompt}],
             'max_tokens': 4000,
             'temperature': 0.3  # Low temperature for factual data extraction
