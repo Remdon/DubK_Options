@@ -6,6 +6,7 @@ This module contains:
 - Multi-leg options management
 - Multi-leg order management and tracking
 - The Wheel Strategy (systematic premium collection)
+- Bull Put Spread Strategy (defined-risk premium collection)
 """
 
 from .options_validator import OptionsValidator
@@ -14,6 +15,8 @@ from .multi_leg_order_manager import MultiLegOrderManager
 from .multi_leg_tracker import MultiLegOrderTracker
 from .wheel_strategy import WheelStrategy
 from .wheel_manager import WheelManager, WheelState
+from .bull_put_spread_strategy import BullPutSpreadStrategy
+from .spread_manager import SpreadManager, SpreadState
 
 __all__ = [
     'OptionsValidator',
@@ -23,4 +26,7 @@ __all__ = [
     'WheelStrategy',
     'WheelManager',
     'WheelState',
+    'BullPutSpreadStrategy',
+    'SpreadManager',
+    'SpreadState',
 ]

@@ -29,6 +29,11 @@ class Config:
         self.ALPACA_API_KEY = os.getenv('ALPACA_API_KEY')
         self.ALPACA_SECRET_KEY = os.getenv('ALPACA_SECRET_KEY')
         self.ALPACA_MODE = os.getenv('ALPACA_MODE', 'paper').lower()
+
+        # Bull Put Spread Strategy - Separate Alpaca Account
+        self.ALPACA_BULL_PUT_KEY = os.getenv('ALPACA_BULL_PUT_KEY')
+        self.ALPACA_BULL_PUT_SECRET_KEY = os.getenv('ALPACA_BULL_PUT_SECRET_KEY')
+
         self.OPENBB_API_URL = os.getenv('OPENBB_API_URL', 'http://127.0.0.1:6900/api/v1')
 
         # =====================================================================
@@ -78,6 +83,41 @@ class Config:
         # Wheel exit rules (for short options)
         self.WHEEL_PROFIT_TARGET_PCT = float(os.getenv('WHEEL_PROFIT_TARGET_PCT', '0.50'))  # Close at 50% profit
         self.WHEEL_STOP_LOSS_PCT = float(os.getenv('WHEEL_STOP_LOSS_PCT', '-2.00'))  # Stop at -200% (let assignment happen)
+
+        # =====================================================================
+        # BULL PUT SPREAD STRATEGY CONFIGURATION
+        # =====================================================================
+        # Bull Put Spreads: Defined-risk credit spreads ideal for $10K accounts
+        # Lower capital requirement ($300-500 vs $2,000+ for Wheel)
+        # 65-75% win rate, defined max loss
+
+        # Spread stock quality filters
+        self.SPREAD_MIN_STOCK_PRICE = float(os.getenv('SPREAD_MIN_STOCK_PRICE', '20.00'))  # Affordable spreads
+        self.SPREAD_MAX_STOCK_PRICE = float(os.getenv('SPREAD_MAX_STOCK_PRICE', '300.00'))  # Can trade higher prices (defined risk)
+        self.SPREAD_MIN_MARKET_CAP = float(os.getenv('SPREAD_MIN_MARKET_CAP', '2000000000'))  # $2B minimum
+
+        # Spread IV requirements
+        self.SPREAD_MIN_IV_RANK = float(os.getenv('SPREAD_MIN_IV_RANK', '50'))  # Sell when IV elevated
+        self.SPREAD_MAX_IV_RANK = float(os.getenv('SPREAD_MAX_IV_RANK', '100'))  # Can sell at any high IV
+
+        # Spread construction parameters
+        self.SPREAD_WIDTH = float(os.getenv('SPREAD_WIDTH', '5.00'))  # $5 wide spreads (standard)
+        self.SPREAD_MIN_CREDIT = float(os.getenv('SPREAD_MIN_CREDIT', '1.00'))  # Minimum $1.00 credit
+        self.SPREAD_MAX_CAPITAL_PER_SPREAD = float(os.getenv('SPREAD_MAX_CAPITAL_PER_SPREAD', '500'))  # Max $500 risk per spread
+        self.SPREAD_SHORT_STRIKE_DELTA = float(os.getenv('SPREAD_SHORT_STRIKE_DELTA', '-0.30'))  # -0.25 to -0.35 (25-35% OTM)
+
+        # Spread position limits
+        self.MAX_SPREAD_POSITIONS = int(os.getenv('MAX_SPREAD_POSITIONS', '15'))  # Max 15 spreads
+        self.MAX_CAPITAL_PER_SPREAD_POSITION = float(os.getenv('MAX_CAPITAL_PER_SPREAD_POSITION', '0.10'))  # 10% per spread
+
+        # Spread DTE parameters (shorter than Wheel)
+        self.SPREAD_TARGET_DTE = int(os.getenv('SPREAD_TARGET_DTE', '35'))  # 30-45 days optimal
+        self.SPREAD_MIN_DTE = int(os.getenv('SPREAD_MIN_DTE', '21'))  # Minimum 21 days
+        self.SPREAD_MAX_DTE = int(os.getenv('SPREAD_MAX_DTE', '60'))  # Maximum 60 days
+
+        # Spread exit rules
+        self.SPREAD_PROFIT_TARGET_PCT = float(os.getenv('SPREAD_PROFIT_TARGET_PCT', '0.50'))  # Close at 50% profit
+        self.SPREAD_STOP_LOSS_PCT = float(os.getenv('SPREAD_STOP_LOSS_PCT', '-1.00'))  # Stop at -100% (max loss)
 
         # =====================================================================
         # STRATEGY-SPECIFIC EXPIRATION EXITS
