@@ -392,7 +392,7 @@ class OptionsBot:
         print(f"{Colors.HEADER}{'='*80}{Colors.RESET}\n")
 
         try:
-            # Get account info
+            # WHEEL ACCOUNT (Main)
             account = self.trading_client.get_account()
             equity = float(account.equity) if account.equity is not None else 0.0
             buying_power = float(account.buying_power) if account.buying_power is not None else 0.0
@@ -402,11 +402,33 @@ class OptionsBot:
             positions = self.trading_client.get_all_positions()
 
             # Account overview
-            print(f"{Colors.INFO}ACCOUNT OVERVIEW:{Colors.RESET}")
+            print(f"{Colors.INFO}WHEEL ACCOUNT (Main):{Colors.RESET}")
             print(f"{Colors.DIM}  Portfolio Value:    ${equity:>15,.2f}{Colors.RESET}")
             print(f"{Colors.DIM}  Cash:               ${cash:>15,.2f}{Colors.RESET}")
             print(f"{Colors.DIM}  Buying Power:       ${buying_power:>15,.2f}{Colors.RESET}")
             print(f"{Colors.DIM}  Open Positions:     {len(positions):>15}{Colors.RESET}\n")
+
+            # SPREAD ACCOUNT (Secondary) - if configured
+            if self.spread_trading_client:
+                try:
+                    spread_account = self.spread_trading_client.get_account()
+                    spread_equity = float(spread_account.equity) if spread_account.equity is not None else 0.0
+                    spread_cash = float(spread_account.cash) if spread_account.cash is not None else 0.0
+                    spread_buying_power = float(spread_account.buying_power) if spread_account.buying_power is not None else 0.0
+                    spread_positions = self.spread_trading_client.get_all_positions()
+
+                    print(f"{Colors.INFO}SPREAD ACCOUNT (Bull Put Spreads):{Colors.RESET}")
+                    print(f"{Colors.DIM}  Portfolio Value:    ${spread_equity:>15,.2f}{Colors.RESET}")
+                    print(f"{Colors.DIM}  Cash:               ${spread_cash:>15,.2f}{Colors.RESET}")
+                    print(f"{Colors.DIM}  Buying Power:       ${spread_buying_power:>15,.2f}{Colors.RESET}")
+                    print(f"{Colors.DIM}  Open Positions:     {len(spread_positions):>15}{Colors.RESET}\n")
+
+                    # Combined totals
+                    combined_equity = equity + spread_equity
+                    print(f"{Colors.SUCCESS}COMBINED TOTAL:{Colors.RESET}")
+                    print(f"{Colors.SUCCESS}  Total Portfolio:    ${combined_equity:>15,.2f}{Colors.RESET}\n")
+                except Exception as e:
+                    logging.debug(f"[SPREAD] Could not display spread account: {e}")
 
             # Current positions
             if positions:

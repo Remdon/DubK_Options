@@ -155,15 +155,31 @@ class BullPutSpreadStrategy:
         return candidates[:max_candidates]
 
     def _build_stock_universe(self) -> List[Dict]:
-        """Build stock universe using scanner (same as Wheel)"""
-        # Reuse scanner's build_universe method
-        universe = self.scanner.build_universe(
-            min_price=self.MIN_STOCK_PRICE,
-            max_price=self.MAX_STOCK_PRICE,
-            min_market_cap=self.MIN_MARKET_CAP,
-            min_iv_rank=self.MIN_IV_RANK
-        )
-        return universe
+        """Build stock universe using scanner"""
+        # Use scanner's market scan to get candidates
+        try:
+            candidates = self.scanner.scan_market_for_opportunities()
+
+            # Convert scanner format to our format
+            universe = []
+            for candidate in candidates:
+                try:
+                    stock_info = {
+                        'symbol': candidate.get('symbol'),
+                        'price': candidate.get('stock_price', 0),
+                        'iv_rank': candidate.get('iv_rank', 0),
+                        'market_cap': candidate.get('market_cap', 0),
+                        'volume': candidate.get('volume', 0)
+                    }
+                    universe.append(stock_info)
+                except Exception as e:
+                    logging.debug(f"[SPREAD] Error processing candidate {candidate.get('symbol')}: {e}")
+                    continue
+
+            return universe
+        except Exception as e:
+            logging.error(f"[SPREAD] Error scanning market: {e}")
+            return []
 
     def _apply_filters(self, stocks: List[Dict]) -> List[Dict]:
         """Apply spread-specific filters"""
