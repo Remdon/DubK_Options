@@ -2073,6 +2073,10 @@ Provide ONLY the formatted lines, one per symbol. No other text."""
                             else:
                                 print(f"{Colors.WARNING}[WHEEL ASSIGNMENT] {symbol}: Failed to sell covered call (will retry next cycle){Colors.RESET}")
 
+                    # SPREAD POSITION MONITORING: Check all spread positions for exit signals (every 5 minutes)
+                    if self.spread_manager and self.spread_strategy:
+                        self.check_spread_positions()
+
                     # SECOND: Display portfolio strategy summary (scheduled)
                     self.display_portfolio_strategy_summary()
 
@@ -4250,6 +4254,237 @@ Example: AAPL|EXIT|Stock momentum reversed, exit signal"""
 
         except Exception as e:
             logging.error(f"[WHEEL] {symbol}: Error managing existing position: {e}", exc_info=True)
+
+    # =========================================================================
+    # SPREAD POSITION MONITORING AND EXIT MANAGEMENT
+    # =========================================================================
+
+    def check_spread_positions(self):
+        """
+        Monitor all active spread positions and apply exit rules.
+        Called every 5 minutes during market hours (like Wheel strategy).
+        """
+        if not self.spread_manager or not self.spread_strategy:
+            return
+
+        try:
+            positions = self.spread_manager.get_all_positions()
+
+            if not positions:
+                return
+
+            logging.info(f"[SPREAD MONITOR] Checking {len(positions)} spread position(s) for exit signals...")
+
+            for position in positions:
+                try:
+                    # Get current spread value from broker
+                    current_value = self._get_spread_current_value(position)
+
+                    # Update database with current value and unrealized P&L
+                    self.spread_manager.update_spread_value(
+                        position['id'],
+                        current_value
+                    )
+
+                    # Check exit conditions
+                    self._check_spread_exit_conditions(position, current_value)
+
+                except Exception as e:
+                    logging.error(f"[SPREAD MONITOR] Error managing spread {position['symbol']}: {e}", exc_info=True)
+
+        except Exception as e:
+            logging.error(f"[SPREAD MONITOR] Error in spread position monitoring: {e}", exc_info=True)
+
+    def _get_spread_current_value(self, position: Dict) -> float:
+        """
+        Get current market value of spread by fetching both legs.
+
+        Args:
+            position: Spread position dict from spread_manager.get_all_positions()
+
+        Returns:
+            Current value of spread (short put value - long put value)
+        """
+        try:
+            symbol = position['symbol']
+            short_put_symbol = position['short_put_symbol']
+            long_put_symbol = position['long_put_symbol']
+
+            # Try to get position values from broker
+            try:
+                short_position = self.spread_trading_client.get_open_position(short_put_symbol)
+                long_position = self.spread_trading_client.get_open_position(long_put_symbol)
+
+                if short_position and long_position:
+                    # Spread value = short put value - long put value
+                    short_value = float(short_position.market_value) / 100
+                    long_value = float(long_position.market_value) / 100
+                    spread_value = short_value - long_value
+                    return abs(spread_value)
+
+            except Exception as e:
+                logging.debug(f"[SPREAD] Could not get spread value from broker positions: {e}")
+
+            # Fallback: estimate from options chain
+            return self._estimate_spread_value_from_chain(position)
+
+        except Exception as e:
+            logging.error(f"[SPREAD] Error getting spread value for {position['symbol']}: {e}", exc_info=True)
+            return 0.0
+
+    def _estimate_spread_value_from_chain(self, position: Dict) -> float:
+        """
+        Estimate spread value by fetching current option prices from chain.
+
+        Args:
+            position: Spread position dict
+
+        Returns:
+            Estimated spread value based on mid prices
+        """
+        try:
+            symbol = position['symbol']
+            expiration = position['expiration']
+            short_strike = position['short_strike']
+            long_strike = position['long_strike']
+
+            # Get options chain
+            options = self.spread_strategy._get_options_chain(symbol)
+
+            if not options:
+                logging.debug(f"[SPREAD] No options chain available for {symbol}")
+                return 0.0
+
+            # Find short put
+            short_put = None
+            long_put = None
+
+            for opt in options:
+                if (opt['type'] == 'put' and
+                    opt['expiration'] == expiration and
+                    abs(opt['strike'] - short_strike) < 0.01):
+                    short_put = opt
+                elif (opt['type'] == 'put' and
+                      opt['expiration'] == expiration and
+                      abs(opt['strike'] - long_strike) < 0.01):
+                    long_put = opt
+
+            if short_put and long_put:
+                # Calculate mid prices
+                short_mid = (short_put['bid'] + short_put['ask']) / 2
+                long_mid = (long_put['bid'] + long_put['ask']) / 2
+                spread_value = short_mid - long_mid
+                return abs(spread_value)
+
+            logging.debug(f"[SPREAD] Could not find both legs in options chain for {symbol}")
+            return 0.0
+
+        except Exception as e:
+            logging.debug(f"[SPREAD] Error estimating spread value from chain: {e}")
+            return 0.0
+
+    def _check_spread_exit_conditions(self, position: Dict, current_value: float):
+        """
+        Check if spread should be closed based on profit target,
+        stop loss, or expiration.
+
+        Args:
+            position: Spread position dict
+            current_value: Current market value of spread
+        """
+        symbol = position['symbol']
+        spread_id = position['id']
+        credit_received = position['total_credit']
+        max_profit = position['max_profit']
+
+        # Calculate P&L
+        # For credit spreads: P&L = credit received - current value
+        unrealized_pnl = (credit_received - current_value) * 100
+        pnl_pct = (unrealized_pnl / max_profit) if max_profit > 0 else 0
+
+        # Profit Target (50%)
+        if pnl_pct >= self.spread_strategy.PROFIT_TARGET_PCT:
+            logging.info(f"[SPREAD] {symbol}: Hit profit target ({pnl_pct:.1%}), closing spread")
+            print(f"{Colors.SUCCESS}[SPREAD EXIT] {symbol}: Profit target hit ({pnl_pct:.1%}) - Closing spread{Colors.RESET}")
+            self._close_spread_position(position, "PROFIT_TARGET")
+            return
+
+        # Days to Expiration Management
+        dte = self._calculate_spread_dte(position)
+
+        # Close at 7 DTE if profitable
+        if dte <= 7 and unrealized_pnl > 0:
+            logging.info(f"[SPREAD] {symbol}: {dte} DTE with profit (${unrealized_pnl:.0f}), closing")
+            print(f"{Colors.INFO}[SPREAD EXIT] {symbol}: {dte} DTE with profit - Closing early{Colors.RESET}")
+            self._close_spread_position(position, "EXPIRATION_MANAGEMENT")
+            return
+
+        # Close at 0 DTE regardless (avoid assignment complexity)
+        if dte <= 0:
+            logging.info(f"[SPREAD] {symbol}: Expiration day, closing position")
+            print(f"{Colors.WARNING}[SPREAD EXIT] {symbol}: Expiration day - Closing position{Colors.RESET}")
+            self._close_spread_position(position, "EXPIRATION")
+            return
+
+        # Let losers run (defined risk) - no stop loss on credit spreads
+
+    def _calculate_spread_dte(self, position: Dict) -> int:
+        """
+        Calculate days to expiration for spread.
+
+        Args:
+            position: Spread position dict
+
+        Returns:
+            Days to expiration
+        """
+        try:
+            expiration_str = position['expiration']
+            expiration_date = datetime.strptime(expiration_str, '%Y-%m-%d')
+            dte = (expiration_date - datetime.now()).days
+            return max(0, dte)
+        except Exception as e:
+            logging.error(f"[SPREAD] Error calculating DTE: {e}")
+            return 999  # Return high number on error to avoid premature closes
+
+    def _close_spread_position(self, position: Dict, reason: str) -> bool:
+        """
+        Close spread position by updating database.
+        For paper trading, we update the database only.
+        For live trading, this would execute a buy-to-close order.
+
+        Args:
+            position: Spread position dict
+            reason: Exit reason (PROFIT_TARGET, EXPIRATION_MANAGEMENT, etc.)
+
+        Returns:
+            True if successful, False otherwise
+        """
+        try:
+            symbol = position['symbol']
+            spread_id = position['id']
+
+            # Get current exit price
+            exit_price = self._get_spread_current_value(position)
+
+            # Close position in database
+            self.spread_manager.close_spread_position(
+                spread_id=spread_id,
+                exit_price=exit_price,
+                exit_reason=reason
+            )
+
+            logging.info(f"[SPREAD] {symbol}: Closed spread position #{spread_id} - {reason}")
+            print(f"{Colors.SUCCESS}✓ [SPREAD] {symbol}: Position closed - {reason}{Colors.RESET}")
+
+            # NOTE: Actual multi-leg close order would go here for live trading
+            # For now (paper trading), we just update the database
+
+            return True
+
+        except Exception as e:
+            logging.error(f"[SPREAD] Error closing spread position: {e}", exc_info=True)
+            return False
 
     def _execute_wheel_call_sale(self, symbol: str, call_details: Dict) -> bool:
         """
