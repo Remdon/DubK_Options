@@ -125,6 +125,7 @@ Requirements:
 - DO NOT include any text outside the JSON structure"""
 
         try:
+            logging.info("[GROK] Calling Grok API for unusual options...")
             response_data = self._call_grok_api(prompt)
 
             if response_data and 'results' in response_data:
@@ -135,12 +136,16 @@ Requirements:
                 self._cache_unusual_options(results)
 
                 return results
+            elif response_data:
+                # Got a response but no 'results' key - log what we got
+                logging.warning(f"[GROK] Unexpected response structure: {response_data}")
+                return []
             else:
-                logging.warning("[GROK] No unusual options data returned")
+                logging.warning("[GROK] No response data from Grok API (returned None)")
                 return []
 
         except Exception as e:
-            logging.error(f"[GROK] Error fetching unusual options: {e}")
+            logging.error(f"[GROK] Error fetching unusual options: {e}", exc_info=True)
             return []
 
     def fetch_earnings_calendar(self, upcoming_days: int = 30) -> List[Dict]:
@@ -204,6 +209,7 @@ Requirements:
 - Focus on US stocks (NYSE, NASDAQ)"""
 
         try:
+            logging.info("[GROK] Calling Grok API for earnings calendar...")
             response_data = self._call_grok_api(prompt)
 
             if response_data and 'results' in response_data:
@@ -214,12 +220,16 @@ Requirements:
                 self._cache_earnings(results, upcoming_days)
 
                 return results
+            elif response_data:
+                # Got a response but no 'results' key - log what we got
+                logging.warning(f"[GROK] Unexpected earnings response structure: {response_data}")
+                return []
             else:
-                logging.warning("[GROK] No earnings calendar data returned")
+                logging.warning("[GROK] No response data from Grok API for earnings (returned None)")
                 return []
 
         except Exception as e:
-            logging.error(f"[GROK] Error fetching earnings calendar: {e}")
+            logging.error(f"[GROK] Error fetching earnings calendar: {e}", exc_info=True)
             return []
 
     def _call_grok_api(self, prompt: str, max_retries: int = 3) -> Optional[Dict]:
@@ -259,15 +269,17 @@ Requirements:
                     content = result.get('choices', [{}])[0].get('message', {}).get('content', '')
 
                     # Log raw response for debugging
-                    logging.debug(f"[GROK] Raw response: {content[:200]}...")
+                    logging.info(f"[GROK] Raw response (first 500 chars): {content[:500]}")
 
                     # Try to extract JSON from response
                     json_data = self._extract_json(content)
 
                     if json_data:
+                        logging.info(f"[GROK] Successfully parsed JSON with {len(json_data.get('results', []))} results")
                         return json_data
                     else:
                         logging.warning(f"[GROK] Could not parse JSON from response (attempt {attempt + 1}/{max_retries})")
+                        logging.warning(f"[GROK] Full response content: {content}")
 
                 elif response.status_code == 429:
                     # Rate limited - wait and retry
