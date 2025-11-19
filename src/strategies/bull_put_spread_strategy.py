@@ -295,10 +295,76 @@ class BullPutSpreadStrategy:
         }
 
     def _get_options_chain(self, symbol: str) -> List[Dict]:
-        """Get options chain from OpenBB or Alpaca"""
-        # Implementation depends on your data source
-        # For now, return empty list (to be implemented)
-        return []
+        """
+        Get options chain from OpenBB with Greeks calculated
+
+        Returns:
+            List of options dicts with format:
+            {
+                'symbol': 'AAPL250117P00150000',
+                'expiration': '2025-01-17',
+                'strike': 150.0,
+                'type': 'put',
+                'bid': 2.50,
+                'ask': 2.55,
+                'volume': 100,
+                'open_interest': 500,
+                'delta': -0.30,
+                'gamma': 0.05,
+                'theta': -0.02,
+                'vega': 0.15,
+                'implied_volatility': 0.35
+            }
+        """
+        try:
+            # Use OpenBB client to get options chain with Greeks
+            chain_data = self.openbb_client.get_options_chains(symbol, provider='yfinance')
+
+            if not chain_data or 'results' not in chain_data:
+                logging.debug(f"[SPREAD] No options chain data for {symbol}")
+                return []
+
+            options = chain_data['results']
+
+            if not isinstance(options, list):
+                logging.debug(f"[SPREAD] Invalid options format for {symbol}")
+                return []
+
+            # Filter and normalize the options data
+            normalized_options = []
+            for opt in options:
+                try:
+                    # Extract required fields
+                    normalized_opt = {
+                        'symbol': opt.get('contract_symbol', ''),
+                        'expiration': opt.get('expiration', ''),
+                        'strike': float(opt.get('strike', 0)),
+                        'type': opt.get('option_type', '').lower(),  # 'call' or 'put'
+                        'bid': float(opt.get('bid', 0)),
+                        'ask': float(opt.get('ask', 0)),
+                        'volume': int(opt.get('volume', 0)),
+                        'open_interest': int(opt.get('open_interest', 0)),
+                        'delta': float(opt.get('delta', 0)),
+                        'gamma': float(opt.get('gamma', 0)),
+                        'theta': float(opt.get('theta', 0)),
+                        'vega': float(opt.get('vega', 0)),
+                        'implied_volatility': float(opt.get('implied_volatility', 0))
+                    }
+
+                    # Only include options with valid data
+                    if normalized_opt['strike'] > 0 and normalized_opt['expiration']:
+                        normalized_options.append(normalized_opt)
+
+                except (ValueError, TypeError) as e:
+                    logging.debug(f"[SPREAD] Error normalizing option for {symbol}: {e}")
+                    continue
+
+            logging.debug(f"[SPREAD] Found {len(normalized_options)} options for {symbol}")
+            return normalized_options
+
+        except Exception as e:
+            logging.error(f"[SPREAD] Error getting options chain for {symbol}: {e}")
+            return []
 
     def _find_target_expiration(self, options_chain: List[Dict]) -> Optional[str]:
         """Find expiration closest to TARGET_DTE"""
