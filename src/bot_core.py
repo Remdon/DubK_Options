@@ -208,7 +208,11 @@ class OptionsBot:
         self.regime_analyzer = MarketRegimeAnalyzer(self.openbb)
         self.sentiment_analyzer = SentimentAnalyzer()
         self.earnings_calendar = EconomicCalendar()
-        self.market_scanner = ExpertMarketScanner(self.openbb, self.iv_analyzer)
+        self.market_scanner = ExpertMarketScanner(
+            self.openbb,
+            self.iv_analyzer,
+            grok_api_key=config.XAI_API_KEY  # Pass Grok API key for fallback data sources
+        )
         self.trade_journal = TradeJournal()
         self.portfolio_manager = PortfolioManager(self.trading_client)
 

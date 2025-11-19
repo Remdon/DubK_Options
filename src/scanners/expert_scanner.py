@@ -22,6 +22,9 @@ import statistics
 # Import Colors class
 from src.core.colors import Colors
 
+# Import Grok data fetcher for fallback data sources
+from src.utils.grok_data_fetcher import GrokDataFetcher
+
 
 # ============================================================================
 # TIER 1 ALPHA GENERATION - CONFIGURATION CONSTANTS
@@ -157,7 +160,7 @@ class ExpertMarketScanner:
     6. Large block trades
     """
 
-    def __init__(self, openbb_client, iv_analyzer, earnings_calendar=None):
+    def __init__(self, openbb_client, iv_analyzer, earnings_calendar=None, grok_api_key=None):
         self.openbb = openbb_client
         self.iv_analyzer = iv_analyzer
         self.earnings_calendar = earnings_calendar
@@ -168,6 +171,15 @@ class ExpertMarketScanner:
         self.institutional_cache = {}     # Cache institutional positioning
         self.short_interest_cache = {}    # Cache short squeeze candidates
         self.darkpool_cache = {}          # Cache dark pool activity
+
+        # TIER 1 GROK FALLBACK: Alternative data fetcher when OpenBB providers unavailable
+        self.grok_fetcher = None
+        if grok_api_key:
+            try:
+                self.grok_fetcher = GrokDataFetcher(grok_api_key)
+                logging.info("[GROK] Grok data fetcher initialized for fallback data sources")
+            except Exception as e:
+                logging.warning(f"[GROK] Could not initialize Grok fetcher: {e}")
 
         # SPRINT 1: QUICK WINS - Caches for enhanced analysis
         self.vix_value = None  # Cache VIX for session
@@ -221,11 +233,29 @@ class ExpertMarketScanner:
                     logging.debug(f"Error fetching unusual options from {provider}: {e}")
                     continue
             else:
-                # All providers failed
-                logging.warning("Unusual options API unavailable from all providers - continuing without this data")
-                return []
+                # All OpenBB providers failed - try Grok fallback
+                logging.warning("Unusual options API unavailable from all OpenBB providers")
 
-            data = response.json().get('results', [])
+                if self.grok_fetcher:
+                    logging.info("[GROK FALLBACK] Attempting to fetch unusual options from free sources via Grok...")
+                    try:
+                        grok_data = self.grok_fetcher.fetch_unusual_options(min_premium=min_premium)
+                        if grok_data:
+                            # Convert Grok data to OpenBB format
+                            data = grok_data
+                            logging.info(f"[GROK FALLBACK] Successfully fetched {len(data)} unusual options from free sources")
+                        else:
+                            logging.warning("[GROK FALLBACK] No unusual options data available from free sources")
+                            return []
+                    except Exception as e:
+                        logging.error(f"[GROK FALLBACK] Error fetching from Grok: {e}")
+                        return []
+                else:
+                    logging.warning("Grok fallback not available - continuing without unusual options data")
+                    return []
+
+            if 'data' not in locals():
+                data = response.json().get('results', [])
 
             # Process unusual activity
             unusual_trades = []
@@ -537,11 +567,29 @@ class ExpertMarketScanner:
                     logging.debug(f"Error fetching earnings from {provider}: {e}")
                     continue
             else:
-                # All providers failed
-                logging.warning("Earnings calendar API unavailable from all providers - continuing without this data")
-                return []
+                # All OpenBB providers failed - try Grok fallback
+                logging.warning("Earnings calendar API unavailable from all OpenBB providers")
 
-            data = response.json().get('results', [])
+                if self.grok_fetcher:
+                    logging.info("[GROK FALLBACK] Attempting to fetch earnings calendar from free sources via Grok...")
+                    try:
+                        grok_data = self.grok_fetcher.fetch_earnings_calendar(upcoming_days=upcoming_days)
+                        if grok_data:
+                            # Convert Grok data to OpenBB format
+                            data = grok_data
+                            logging.info(f"[GROK FALLBACK] Successfully fetched {len(data)} earnings events from free sources")
+                        else:
+                            logging.warning("[GROK FALLBACK] No earnings data available from free sources")
+                            return []
+                    except Exception as e:
+                        logging.error(f"[GROK FALLBACK] Error fetching from Grok: {e}")
+                        return []
+                else:
+                    logging.warning("Grok fallback not available - continuing without earnings data")
+                    return []
+
+            if 'data' not in locals():
+                data = response.json().get('results', [])
 
             earnings_plays = []
 

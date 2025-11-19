@@ -7,6 +7,7 @@ This module contains:
 - API caching utilities
 - Rate limiting functions
 - Greeks calculator for Black-Scholes option pricing
+- Grok data fetcher for alternative data sources
 """
 
 from .validators import (
@@ -20,6 +21,7 @@ from .validators import (
 
 from .circuit_breaker import CircuitBreaker, APICache, RateLimiter
 from .greeks_calculator import GreeksCalculator
+from .grok_data_fetcher import GrokDataFetcher
 
 __all__ = [
     # Validators
@@ -34,4 +36,5 @@ __all__ = [
     'APICache',
     'RateLimiter',
     'GreeksCalculator',
+    'GrokDataFetcher',
 ]
