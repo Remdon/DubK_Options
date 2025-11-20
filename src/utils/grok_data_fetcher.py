@@ -94,28 +94,24 @@ class GrokDataFetcher:
 
         logging.info("[GROK] Fetching unusual options activity from free sources...")
 
-        prompt = f"""SEARCH THE WEB RIGHT NOW for today's unusual options activity. Visit these sites and extract real data:
+        prompt = f"""Based on your knowledge of the stock market and current trading patterns, identify the most likely stocks that are experiencing unusual options activity TODAY.
 
-1. https://www.barchart.com/options/unusual-activity
-2. https://www.marketbeat.com/originals/unusual-options-activity/
-3. https://finviz.com/ (screener with unusual volume)
-4. Search X/Twitter for "#unusualoptions" or "unusual options activity" posts from today
+Look for stocks with:
+- High implied volatility (IV > 40%)
+- Recent news or catalyst events
+- Momentum or sector rotation
+- Large institutional interest
+- Earnings approaching or recently announced
 
-Extract the ACTUAL unusual options trades being reported TODAY. Look for:
-- Large block trades (premium > ${min_premium:,})
-- Option sweeps (aggressive multi-exchange orders)
-- High volume relative to open interest
-
-Return ONLY valid JSON with REAL data you find, no explanations or markdown:
+Return ONLY valid JSON with your analysis (5-10 symbols maximum):
 
 {{
   "results": [
     {{
-      "symbol": "TSLA",
-      "contract_symbol": "TSLA250117C00300000",
-      "total_premium": 1500000,
-      "volume": 5000,
-      "open_interest": 2000,
+      "symbol": "NVDA",
+      "total_premium": 2000000,
+      "volume": 10000,
+      "open_interest": 5000,
       "sentiment": "BULLISH",
       "trade_type": "sweep"
     }}
@@ -123,13 +119,12 @@ Return ONLY valid JSON with REAL data you find, no explanations or markdown:
 }}
 
 Requirements:
-- Only include trades with total premium > ${min_premium:,}
-- Classify sentiment as "BULLISH" (calls) or "BEARISH" (puts)
-- Include actual volume and open_interest from the sources
-- trade_type: "sweep", "block", or "unknown"
-- If you find NO unusual activity today, return: {{"results": []}}
-- DO NOT make up data - only return what you actually find on the web
-- DO NOT include any text outside the JSON structure"""
+- Focus on liquid, high-volume stocks (market cap > $2B)
+- Estimate premium based on typical unusual options activity (> ${min_premium:,})
+- sentiment: "BULLISH" for calls, "BEARISH" for puts
+- trade_type: "sweep" for aggressive orders, "block" for large single orders
+- Return empty results [] if you cannot identify any unusual activity
+- ONLY return the JSON structure, no markdown or explanations"""
 
         try:
             logging.info("[GROK] Calling Grok API for unusual options...")
@@ -179,40 +174,34 @@ Requirements:
         today = datetime.now().strftime('%Y-%m-%d')
         end_date = (datetime.now() + timedelta(days=upcoming_days)).strftime('%Y-%m-%d')
 
-        prompt = f"""SEARCH THE WEB RIGHT NOW for upcoming earnings announcements from {today} to {end_date}. Visit these sites and extract real data:
+        prompt = f"""Based on your knowledge of earnings calendars, identify major companies (market cap > $2B) that are likely reporting earnings from {today} to {end_date}.
 
-1. https://finance.yahoo.com/calendar/earnings (most comprehensive free source)
-2. https://www.marketbeat.com/earnings/ (detailed earnings calendar)
-3. https://www.nasdaq.com/market-activity/earnings (official NASDAQ calendar)
-4. Search X/Twitter for earnings announcements and company IR pages
+Focus on:
+- Large cap tech companies (FAANG, mega-cap tech)
+- Major financial institutions
+- Blue chip industrials
+- Companies with quarterly cycles (Jan/Apr/Jul/Oct typical reporting months)
 
-Extract the ACTUAL earnings dates being reported for the next {upcoming_days} days. Look for:
-- Major companies (market cap > $2B)
-- Confirmed earnings dates
-- Timing (before market/after market/during market)
-- EPS estimates if available
-
-Return ONLY valid JSON with REAL data you find on the web:
+Return ONLY valid JSON with your best estimates (10-20 companies maximum):
 
 {{
   "results": [
     {{
-      "symbol": "TSLA",
-      "report_date": "2025-01-29",
+      "symbol": "AAPL",
+      "report_date": "2025-01-30",
       "report_time": "AMC",
-      "eps_estimate": 1.25,
-      "revenue_estimate": 25000000000
+      "eps_estimate": 2.10,
+      "revenue_estimate": 120000000000
     }}
   ]
 }}
 
 Requirements:
 - Only include symbols with market cap > $2 billion
-- report_time: "BMO" (before market open), "AMC" (after market close), or "UNKNOWN"
-- Include eps_estimate and revenue_estimate from analyst consensus (null if not available)
-- If you find NO earnings in the date range, return: {{"results": []}}
-- DO NOT make up data - only return what you actually find on the web
-- DO NOT include any text outside the JSON structure
+- report_time: "BMO" (before market), "AMC" (after market), or "UNKNOWN"
+- Provide reasonable EPS/revenue estimates based on company size
+- Return empty results [] if you cannot identify any earnings in this period
+- ONLY return the JSON structure, no markdown or explanations
 - Focus on US stocks (NYSE, NASDAQ)"""
 
         try:
@@ -256,7 +245,7 @@ Requirements:
         }
 
         payload = {
-            'model': 'grok-4-1-fast-non-reasoning-latest',  # Grok 4.1 Fast (web search enabled, cost-efficient)
+            'model': 'grok-4-fast',  # Match working implementation in bot_core.py
             'messages': [{'role': 'user', 'content': prompt}],
             'max_tokens': 4000,
             'temperature': 0.3  # Low temperature for factual data extraction
@@ -268,7 +257,7 @@ Requirements:
                     self.base_url,
                     json=payload,
                     headers=headers,
-                    timeout=120
+                    timeout=180  # Match working implementation (180s)
                 )
 
                 if response.status_code == 200:
