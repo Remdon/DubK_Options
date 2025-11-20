@@ -249,7 +249,7 @@ Requirements:
         }
 
         payload = {
-            'model': 'grok-beta',  # Grok Beta (web search enabled, cost-efficient)
+            'model': 'grok-4-1-fast-non-reasoning-latest',  # Grok 4.1 Fast (web search enabled, cost-efficient)
             'messages': [{'role': 'user', 'content': prompt}],
             'max_tokens': 4000,
             'temperature': 0.3  # Low temperature for factual data extraction
