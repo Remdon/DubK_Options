@@ -173,12 +173,20 @@ class BullPutSpreadStrategy:
             universe = []
             for candidate in candidates:
                 try:
+                    # Extract from nested structure (expert scanner returns: {symbol, stock_data, analysis})
+                    stock_data = candidate.get('stock_data', {})
+                    analysis = candidate.get('analysis', {})
+                    iv_metrics = analysis.get('iv_metrics', {})
+
+                    # Get price from stock_data (last_price or close)
+                    price = stock_data.get('last_price') or stock_data.get('close', 0)
+
                     stock_info = {
                         'symbol': candidate.get('symbol'),
-                        'price': candidate.get('stock_price', 0),
-                        'iv_rank': candidate.get('iv_rank', 0),
-                        'market_cap': candidate.get('market_cap', 0),
-                        'volume': candidate.get('volume', 0)
+                        'price': price,
+                        'iv_rank': iv_metrics.get('iv_rank', 0),
+                        'market_cap': stock_data.get('market_cap', 0),
+                        'volume': stock_data.get('volume', 0)
                     }
                     universe.append(stock_info)
                 except Exception as e:
