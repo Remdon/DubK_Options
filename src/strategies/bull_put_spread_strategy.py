@@ -155,12 +155,21 @@ class BullPutSpreadStrategy:
         return candidates[:max_candidates]
 
     def _build_stock_universe(self) -> List[Dict]:
-        """Build stock universe using scanner"""
+        """
+        Build stock universe for spread strategy.
+
+        NOTE: Uses same scanner as Wheel but spreads need DIFFERENT characteristics:
+        - Wheel wants: LOW IV rank (buy low, sell high)
+        - Spreads want: HIGHER IV rank (sell premium when elevated)
+
+        Strategy: Accept ALL scanner results, filter in _apply_filters()
+        """
         # Use scanner's market scan to get candidates
         try:
             candidates = self.scanner.scan_market_for_opportunities()
 
             # Convert scanner format to our format
+            # IMPORTANT: Don't filter here - spreads and wheel want different IV profiles
             universe = []
             for candidate in candidates:
                 try:
@@ -176,29 +185,51 @@ class BullPutSpreadStrategy:
                     logging.debug(f"[SPREAD] Error processing candidate {candidate.get('symbol')}: {e}")
                     continue
 
+            logging.info(f"[SPREAD] Scanner provided {len(universe)} total candidates")
             return universe
         except Exception as e:
             logging.error(f"[SPREAD] Error scanning market: {e}")
             return []
 
     def _apply_filters(self, stocks: List[Dict]) -> List[Dict]:
-        """Apply spread-specific filters"""
+        """
+        Apply spread-specific filters.
+
+        NOTE: Spreads need HIGHER IV than Wheel strategy
+        - Wheel looks for LOW IV (0-30% rank) - buy low volatility
+        - Spreads look for ELEVATED IV (20%+ rank) - sell premium when elevated
+
+        This means spreads may find ZERO candidates when market is calm (VIX <15)
+        """
         filtered = []
+        rejection_reasons = {'price': 0, 'iv_rank': 0, 'market_cap': 0}
 
         for stock in stocks:
             # Filter by price range
             if not (self.MIN_STOCK_PRICE <= stock['price'] <= self.MAX_STOCK_PRICE):
+                rejection_reasons['price'] += 1
                 continue
 
-            # Filter by IV rank
+            # Filter by IV rank (spreads need elevated IV to sell premium)
             if stock.get('iv_rank', 0) < self.MIN_IV_RANK:
+                rejection_reasons['iv_rank'] += 1
                 continue
 
             # Filter by market cap
             if stock.get('market_cap', 0) < self.MIN_MARKET_CAP:
+                rejection_reasons['market_cap'] += 1
                 continue
 
             filtered.append(stock)
+
+        # Log why stocks were rejected
+        if not filtered:
+            logging.warning(f"[SPREAD] No stocks passed filters. Rejections: "
+                          f"price={rejection_reasons['price']}, "
+                          f"iv_rank={rejection_reasons['iv_rank']} (need >={self.MIN_IV_RANK}%), "
+                          f"market_cap={rejection_reasons['market_cap']}")
+        else:
+            logging.info(f"[SPREAD] {len(filtered)}/{len(stocks)} stocks passed filters")
 
         return filtered
 
