@@ -35,10 +35,17 @@ class GrokDataFetcher:
             api_key: XAI API key
             base_url: XAI API endpoint
         """
+        logging.info(f"[GROK DEBUG] GrokDataFetcher.__init__ called with key length: {len(api_key) if api_key else 0}")
         self.api_key = api_key
         self.base_url = base_url
         self.cache_db = 'data_cache.db'
-        self._init_cache_db()
+        try:
+            logging.info("[GROK DEBUG] Initializing cache database...")
+            self._init_cache_db()
+            logging.info("[GROK DEBUG] Cache database initialized successfully")
+        except Exception as e:
+            logging.error(f"[GROK ERROR] Failed to initialize cache DB: {e}", exc_info=True)
+            raise
 
     def _init_cache_db(self):
         """Initialize cache database"""
