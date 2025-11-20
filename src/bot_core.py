@@ -208,6 +208,10 @@ class OptionsBot:
         self.regime_analyzer = MarketRegimeAnalyzer(self.openbb)
         self.sentiment_analyzer = SentimentAnalyzer()
         self.earnings_calendar = EconomicCalendar()
+
+        # GROK DEBUG: Log API key status before scanner init
+        logging.warning(f"[GROK INIT] About to initialize scanner - XAI_API_KEY present: {bool(config.XAI_API_KEY)}, length: {len(config.XAI_API_KEY) if config.XAI_API_KEY else 0}")
+
         self.market_scanner = ExpertMarketScanner(
             self.openbb,
             self.iv_analyzer,

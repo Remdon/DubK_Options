@@ -174,14 +174,16 @@ class ExpertMarketScanner:
 
         # TIER 1 GROK FALLBACK: Alternative data fetcher when OpenBB providers unavailable
         self.grok_fetcher = None
-        logging.info(f"[GROK DEBUG] Scanner received grok_api_key: {bool(grok_api_key)} (length: {len(grok_api_key) if grok_api_key else 0})")
+        logging.warning(f"[GROK INIT] Scanner __init__ called - grok_api_key present: {bool(grok_api_key)}, length: {len(grok_api_key) if grok_api_key else 0}")
         if grok_api_key:
             try:
-                logging.info("[GROK DEBUG] Attempting to initialize GrokDataFetcher...")
+                logging.warning("[GROK INIT] API key present, attempting to initialize GrokDataFetcher...")
                 self.grok_fetcher = GrokDataFetcher(grok_api_key)
-                logging.info("[GROK] Grok data fetcher initialized for fallback data sources")
+                logging.warning(f"[GROK INIT] GrokDataFetcher initialized successfully: {self.grok_fetcher is not None}")
             except Exception as e:
-                logging.error(f"[GROK] Could not initialize Grok fetcher: {e}", exc_info=True)
+                logging.error(f"[GROK INIT] Failed to initialize Grok fetcher: {e}", exc_info=True)
+        else:
+            logging.error("[GROK INIT] NO API KEY PROVIDED TO SCANNER - Grok will not be available!")
 
         # SPRINT 1: QUICK WINS - Caches for enhanced analysis
         self.vix_value = None  # Cache VIX for session
