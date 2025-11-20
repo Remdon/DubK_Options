@@ -117,13 +117,13 @@ class Config:
         self.SPREAD_MAX_STOCK_PRICE = float(os.getenv('SPREAD_MAX_STOCK_PRICE', '300.00'))  # Can trade higher prices (defined risk)
         self.SPREAD_MIN_MARKET_CAP = float(os.getenv('SPREAD_MIN_MARKET_CAP', '2000000000'))  # $2B minimum
 
-        # Spread IV requirements
-        self.SPREAD_MIN_IV_RANK = float(os.getenv('SPREAD_MIN_IV_RANK', '50'))  # Sell when IV elevated
+        # Spread IV requirements (relaxed for current low-volatility environment)
+        self.SPREAD_MIN_IV_RANK = float(os.getenv('SPREAD_MIN_IV_RANK', '20'))  # Accept lower IV in calm markets
         self.SPREAD_MAX_IV_RANK = float(os.getenv('SPREAD_MAX_IV_RANK', '100'))  # Can sell at any high IV
 
         # Spread construction parameters
         self.SPREAD_WIDTH = float(os.getenv('SPREAD_WIDTH', '5.00'))  # $5 wide spreads (standard)
-        self.SPREAD_MIN_CREDIT = float(os.getenv('SPREAD_MIN_CREDIT', '1.00'))  # Minimum $1.00 credit
+        self.SPREAD_MIN_CREDIT = float(os.getenv('SPREAD_MIN_CREDIT', '0.50'))  # Minimum $0.50 credit (relaxed)
         self.SPREAD_MAX_CAPITAL_PER_SPREAD = float(os.getenv('SPREAD_MAX_CAPITAL_PER_SPREAD', '500'))  # Max $500 risk per spread
         self.SPREAD_SHORT_STRIKE_DELTA = float(os.getenv('SPREAD_SHORT_STRIKE_DELTA', '-0.30'))  # -0.25 to -0.35 (25-35% OTM)
 
