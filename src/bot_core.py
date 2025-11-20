@@ -211,6 +211,7 @@ class OptionsBot:
         self.market_scanner = ExpertMarketScanner(
             self.openbb,
             self.iv_analyzer,
+            earnings_calendar=self.earnings_calendar,  # Pass earnings calendar for earnings analysis
             grok_api_key=config.XAI_API_KEY  # Pass Grok API key for fallback data sources
         )
         self.trade_journal = TradeJournal()
