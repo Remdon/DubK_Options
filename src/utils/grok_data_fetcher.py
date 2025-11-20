@@ -127,7 +127,7 @@ Requirements:
 - ONLY return the JSON structure, no markdown or explanations"""
 
         try:
-            logging.info("[GROK] Calling Grok API for unusual options...")
+            logging.warning("[GROK] Calling Grok API for unusual options...")  # Changed to WARNING to ensure visibility
             response_data = self._call_grok_api(prompt)
 
             if response_data and 'results' in response_data:
@@ -205,7 +205,7 @@ Requirements:
 - Focus on US stocks (NYSE, NASDAQ)"""
 
         try:
-            logging.info("[GROK] Calling Grok API for earnings calendar...")
+            logging.warning("[GROK] Calling Grok API for earnings calendar...")  # Changed to WARNING to ensure visibility
             response_data = self._call_grok_api(prompt)
 
             if response_data and 'results' in response_data:
@@ -265,13 +265,13 @@ Requirements:
                     content = result.get('choices', [{}])[0].get('message', {}).get('content', '')
 
                     # Log raw response for debugging
-                    logging.info(f"[GROK] Raw response (first 500 chars): {content[:500]}")
+                    logging.warning(f"[GROK] Raw response (first 500 chars): {content[:500]}")  # Changed to WARNING
 
                     # Try to extract JSON from response
                     json_data = self._extract_json(content)
 
                     if json_data:
-                        logging.info(f"[GROK] Successfully parsed JSON with {len(json_data.get('results', []))} results")
+                        logging.warning(f"[GROK] Successfully parsed JSON with {len(json_data.get('results', []))} results")  # Changed to WARNING
                         return json_data
                     else:
                         logging.warning(f"[GROK] Could not parse JSON from response (attempt {attempt + 1}/{max_retries})")
