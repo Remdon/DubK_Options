@@ -12,10 +12,11 @@ echo "[*] Cleaning Python cache..."
 find . -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true
 find . -type f -name "*.pyc" -delete 2>/dev/null || true
 
-# Check if virtual environment exists
-if [ ! -f "geotp_env/bin/activate" ]; then
+# Check if virtual environment exists (in parent directory)
+if [ ! -f "../geotp_env/bin/activate" ]; then
     echo "[ERROR] Virtual environment not found!"
-    echo "Please run: python3 -m venv venv"
+    echo "Expected location: ~/geotp_env/"
+    echo "Please run: python3 -m venv ~/geotp_env"
     echo "Then install dependencies: pip3 install -r requirements_openbb.txt"
     exit 1
 fi
@@ -30,7 +31,7 @@ fi
 echo "[*] Found .env file with API keys"
 
 echo "[*] Activating virtual environment..."
-source geotp_env/bin/activate
+source ../geotp_env/bin/activate
 
 echo "[*] Starting OpenBB REST API server in background..."
 nohup python -m uvicorn openbb_core.api.rest_api:app --host 127.0.0.1 --port 6900 > openbb_api.log 2>&1 &
