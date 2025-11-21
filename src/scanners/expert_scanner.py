@@ -271,7 +271,8 @@ class ExpertMarketScanner:
                     continue
 
                 sentiment = trade.get('sentiment', 'neutral').lower()
-                total_premium = trade.get('total_value', 0)
+                # Handle both OpenBB format (total_value) and Grok format (total_premium)
+                total_premium = trade.get('total_value', trade.get('total_premium', 0))
                 trade_type = trade.get('trade_type', '')
 
                 # Track clusters (multiple unusual trades on same symbol = strong signal)
@@ -602,7 +603,8 @@ class ExpertMarketScanner:
                 if not symbol:
                     continue
 
-                report_date = earning.get('reportDate', '')
+                # Handle both OpenBB format (reportDate) and Grok format (report_date)
+                report_date = earning.get('reportDate', earning.get('report_date', ''))
                 if not report_date:
                     continue
 
