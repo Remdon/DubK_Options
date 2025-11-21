@@ -7,6 +7,11 @@ echo "DUBK Options Bot - Startup"
 echo "================================================================================"
 echo ""
 
+# Clean Python cache to ensure latest code is used after git pull
+echo "[*] Cleaning Python cache..."
+find . -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true
+find . -type f -name "*.pyc" -delete 2>/dev/null || true
+
 # Check if virtual environment exists
 if [ ! -f "geotp_env/bin/activate" ]; then
     echo "[ERROR] Virtual environment not found!"
