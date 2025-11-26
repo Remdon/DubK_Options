@@ -369,6 +369,22 @@ class BullPutSpreadStrategy:
                           f"(${self.SPREAD_WIDTH:.0f} below short ${short_put['strike']:.2f})")
             return None
 
+        # Log selected strikes for debugging
+        logging.debug(f"[SPREAD] {symbol}: Selected strikes - Short: ${short_put['strike']:.2f}, Long: ${long_put['strike']:.2f}")
+
+        # CRITICAL: Validate that short and long strikes are different
+        if short_put['strike'] == long_put['strike']:
+            logging.error(f"[SPREAD] {symbol}: INVALID SPREAD - Both legs have same strike ${short_put['strike']:.2f}! "
+                        f"This would create a synthetic position, not a spread. "
+                        f"Target long strike was ${long_strike_target:.2f} but no different strike available.")
+            return None
+
+        # Validate strikes are in correct order (short > long for bull put spread)
+        if short_put['strike'] <= long_put['strike']:
+            logging.error(f"[SPREAD] {symbol}: INVALID SPREAD - Short strike ${short_put['strike']:.2f} "
+                        f"not higher than long strike ${long_put['strike']:.2f}!")
+            return None
+
         # Calculate spread metrics
         short_premium = short_put['bid']  # Selling at bid
         long_premium = long_put['ask']    # Buying at ask

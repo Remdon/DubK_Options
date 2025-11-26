@@ -65,9 +65,16 @@ class WheelStrategy:
         self.MIN_MARKET_CAP = config.WHEEL_MIN_MARKET_CAP
 
         # Optional beta filters (not in config yet, use defaults)
-        self.MIN_BETA = 0.8  # Not too defensive
-        self.MAX_BETA = 1.3  # Not too volatile
+        # EXPERT GUIDANCE: Beta is NOT a primary filter for wheel strategies.
+        # IV Rank is superior for screening. Beta is for portfolio diversification only.
+        # Professional range: 0.5-2.0 if used at all.
+        self.MIN_BETA = 0.5  # Allow defensive stocks (LMT, KO, etc.)
+        self.MAX_BETA = 1.8  # Allow growth stocks with good fundamentals
         self.MIN_ANNUAL_RETURN = 0.20  # 20% target annual return
+
+        # Minimum average volume (liquidity requirement)
+        # Expert guidance: 500K-1M is appropriate. Lowered from 1M to 750K for more candidates.
+        self.MIN_AVG_VOLUME = 750_000  # 750K shares daily (balance quality vs candidates)
 
         # Wheel parameters from config
         self.PUT_OTM_PERCENT = config.WHEEL_PUT_OTM_PERCENT
@@ -81,7 +88,8 @@ class WheelStrategy:
         self.MAX_CAPITAL_PER_WHEEL = config.MAX_CAPITAL_PER_WHEEL
 
         logging.info(f"[WHEEL] Initialized with criteria: ${self.MIN_STOCK_PRICE}-${self.MAX_STOCK_PRICE}, "
-                    f"IV rank {self.MIN_IV_RANK}-{self.MAX_IV_RANK}%, Beta {self.MIN_BETA}-{self.MAX_BETA}")
+                    f"IV rank {self.MIN_IV_RANK}-{self.MAX_IV_RANK}%, Beta {self.MIN_BETA}-{self.MAX_BETA}, "
+                    f"Min Volume {self.MIN_AVG_VOLUME:,.0f}")
 
     def find_wheel_candidates(self, max_candidates: int = 5) -> List[Dict]:
         """
@@ -185,6 +193,11 @@ class WheelStrategy:
             return False, f"Price ${price:.2f} below minimum ${self.MIN_STOCK_PRICE}", None
         if price > self.MAX_STOCK_PRICE:
             return False, f"Price ${price:.2f} above maximum ${self.MAX_STOCK_PRICE}", None
+
+        # Check average volume (liquidity requirement)
+        avg_volume = stock.get('volume', 0) or stock.get('avg_volume', 0)
+        if avg_volume > 0 and avg_volume < self.MIN_AVG_VOLUME:
+            return False, f"Avg volume {avg_volume:,.0f} below minimum {self.MIN_AVG_VOLUME:,.0f} (poor liquidity)", None
 
         # Check IV rank
         iv_rank = stock.get('iv_rank', 0) or stock.get('iv_percentile', 0)

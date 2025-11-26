@@ -195,14 +195,20 @@ class PositionManager:
                         unrealized_pl_pct = float(position.unrealized_plpc) if position.unrealized_plpc is not None else 0.0
                         dte = self._get_days_to_expiration(position.symbol)
 
-                        # Get Wheel profit target from config (50% of max profit)
+                        # Get Wheel profit target and stop loss from config
                         wheel_profit_target = getattr(self.config, 'WHEEL_PROFIT_TARGET_PCT', 0.50)
+                        wheel_stop_loss = getattr(self.config, 'WHEEL_STOP_LOSS_PCT', -2.00)
 
-                        # TastyTrade Research: 50% profit target + 21 DTE management
+                        # TastyTrade Research: 50% profit target + 21 DTE management + Stop Loss
                         exit_reason = None
 
+                        # CRITICAL: Check stop loss FIRST (before profit targets)
+                        if unrealized_pl_pct <= wheel_stop_loss:
+                            exit_reason = f"WHEEL_STOP_LOSS ({unrealized_pl_pct:.1%} loss exceeds {wheel_stop_loss:.0%} limit)"
+                            logging.error(f"  → STOP LOSS TRIGGERED: {underlying} down {unrealized_pl_pct:.1%} (limit: {wheel_stop_loss:.0%})")
+
                         # Check 50% profit target (optimal for credit strategies)
-                        if unrealized_pl_pct >= wheel_profit_target:
+                        elif unrealized_pl_pct >= wheel_profit_target:
                             exit_reason = f"WHEEL_PROFIT_TARGET ({unrealized_pl_pct:.1%} profit - taking 50% of max)"
 
                         # Check 21 DTE early management (if 25%+ profit)
