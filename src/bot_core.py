@@ -439,9 +439,9 @@ class OptionsBot:
                 except Exception as e:
                     logging.debug(f"[SPREAD] Could not display spread account: {e}")
 
-            # Current positions
+            # Current positions - WHEEL STRATEGY
             if positions:
-                print(f"{Colors.INFO}OPEN POSITIONS:{Colors.RESET}")
+                print(f"{Colors.INFO}OPEN POSITIONS - WHEEL STRATEGY:{Colors.RESET}")
                 total_value = 0
                 total_pl = 0
 
@@ -508,6 +508,77 @@ class OptionsBot:
                 print(f"  {pl_color}Total Unrealized P&L: ${total_pl:>+,.2f}{Colors.RESET}\n")
             else:
                 print(f"{Colors.DIM}  No open positions{Colors.RESET}\n")
+
+            # SPREAD POSITIONS - BULL PUT SPREAD STRATEGY
+            if self.spread_manager:
+                try:
+                    spread_positions = self.spread_manager.get_all_positions()
+
+                    if spread_positions:
+                        print(f"{Colors.INFO}OPEN POSITIONS - BULL PUT SPREAD STRATEGY:{Colors.RESET}")
+                        spread_total_value = 0
+                        spread_total_pl = 0
+
+                        for i, spread in enumerate(spread_positions, 1):
+                            symbol = spread['symbol']
+                            short_strike = spread['short_strike']
+                            long_strike = spread['long_strike']
+                            num_contracts = spread['num_contracts']
+                            total_credit = spread['total_credit']
+                            current_value = spread.get('current_value', total_credit)
+                            unrealized_pnl = spread.get('unrealized_pnl', 0)
+                            unrealized_pnl_pct = spread.get('unrealized_pnl_pct', 0)
+                            max_profit = spread['max_profit']
+                            max_risk = spread['max_risk']
+                            expiration = spread['expiration']
+
+                            # Calculate DTE
+                            try:
+                                exp_date = datetime.strptime(expiration, '%Y-%m-%d')
+                                dte = (exp_date - datetime.now()).days
+                                exp_display = exp_date.strftime('%m/%d/%y')
+                            except:
+                                dte = 0
+                                exp_display = expiration
+
+                            spread_total_value += (current_value * 100 * num_contracts)
+                            spread_total_pl += unrealized_pnl
+
+                            # Get underlying stock price and change
+                            try:
+                                stock_data = self.openbb.get_quote(symbol)
+                                if stock_data and isinstance(stock_data, dict) and 'results' in stock_data:
+                                    stock_quote = stock_data['results'][0] if isinstance(stock_data['results'], list) else stock_data['results']
+                                    stock_price = stock_quote.get('price', stock_quote.get('last_price', 0))
+                                    stock_pct_change = stock_quote.get('percent_change', 0) * 100
+                                    stock_change_color = Colors.SUCCESS if stock_pct_change >= 0 else Colors.ERROR
+                                else:
+                                    stock_price = 0
+                                    stock_pct_change = 0
+                                    stock_change_color = Colors.DIM
+                            except:
+                                stock_price = 0
+                                stock_pct_change = 0
+                                stock_change_color = Colors.DIM
+
+                            # Color code P&L
+                            pl_color = Colors.SUCCESS if unrealized_pnl >= 0 else Colors.ERROR
+
+                            # Display format: "Symbol ExpDate SPREAD Qty: X  Strikes: $XX/$XX"
+                            display_symbol = f"{symbol} {exp_display} SPREAD"
+
+                            print(f"{Colors.DIM}  {i:2d}. {display_symbol:25s} Qty: {num_contracts:3d}  Strikes: ${short_strike:.2f}/${long_strike:.2f}")
+                            print(f"      Stock: ${stock_price:>7.2f} {stock_change_color}({stock_pct_change:>+6.2f}%){Colors.RESET}  DTE: {dte:3d}  {pl_color}P&L: ${unrealized_pnl:>+10,.2f} ({unrealized_pnl_pct/100:>+6.1%}){Colors.RESET}")
+                            print(f"      Credit: ${total_credit:.2f}  Current: ${current_value:.2f}  Max Profit: ${max_profit:.0f}  Max Risk: ${max_risk:.0f}\n")
+
+                        print(f"{Colors.DIM}  Total Market Value: ${spread_total_value:,.2f}{Colors.RESET}")
+                        pl_color = Colors.SUCCESS if spread_total_pl >= 0 else Colors.ERROR
+                        print(f"  {pl_color}Total Unrealized P&L: ${spread_total_pl:>+,.2f}{Colors.RESET}\n")
+                    else:
+                        print(f"{Colors.INFO}BULL PUT SPREAD POSITIONS:{Colors.RESET}")
+                        print(f"{Colors.DIM}  No open spread positions{Colors.RESET}\n")
+                except Exception as e:
+                    logging.error(f"Error displaying spread positions: {e}", exc_info=True)
 
             # 30-day performance stats
             stats = self.trade_journal.get_performance_stats(days=30)
