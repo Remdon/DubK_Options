@@ -123,7 +123,7 @@ class Config:
 
         # Spread construction parameters
         self.SPREAD_WIDTH = float(os.getenv('SPREAD_WIDTH', '5.00'))  # $5 wide spreads (standard)
-        self.SPREAD_MIN_CREDIT = float(os.getenv('SPREAD_MIN_CREDIT', '0.50'))  # Minimum $0.50 credit (relaxed)
+        self.SPREAD_MIN_CREDIT = float(os.getenv('SPREAD_MIN_CREDIT', '0.15'))  # Minimum $0.15 credit (realistic for $5 spreads)
         self.SPREAD_MAX_CAPITAL_PER_SPREAD = float(os.getenv('SPREAD_MAX_CAPITAL_PER_SPREAD', '500'))  # Max $500 risk per spread
         self.SPREAD_SHORT_STRIKE_DELTA = float(os.getenv('SPREAD_SHORT_STRIKE_DELTA', '-0.30'))  # -0.25 to -0.35 (25-35% OTM)
 

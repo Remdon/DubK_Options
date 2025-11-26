@@ -340,13 +340,14 @@ class BullPutSpreadStrategy:
             logging.warning(f"[SPREAD] {symbol}: Only {len(puts)} put(s) available for {target_expiration}, need at least 2")
             return None
 
-        # Find short strike (25-35% OTM, delta around -0.25 to -0.35)
-        short_strike_target = stock_price * 0.75  # 25% OTM as starting point
+        # Find short strike (10-20% OTM for better credit collection)
+        # 25% OTM was too far - not collecting enough premium
+        short_strike_target = stock_price * 0.85  # 15% OTM as starting point (better credit)
         short_put = self._find_closest_strike(puts, short_strike_target, 'short')
 
         if not short_put:
             logging.warning(f"[SPREAD] {symbol}: No short put found near ${short_strike_target:.2f} "
-                          f"(25% OTM from ${stock_price:.2f})")
+                          f"(15% OTM from ${stock_price:.2f})")
             return None
 
         # Find long strike (SPREAD_WIDTH below short strike)
