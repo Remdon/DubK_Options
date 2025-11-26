@@ -540,7 +540,7 @@ class WheelStrategy:
         sector = self.get_symbol_sector(symbol)
 
         # Get current wheel positions
-        all_positions = wheel_manager.get_all_positions()
+        all_positions = wheel_manager.get_all_wheel_positions()
 
         # Count positions in this sector
         sector_count = sum(1 for pos in all_positions

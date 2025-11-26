@@ -150,7 +150,7 @@ class InteractiveUI:
 
             # Wheel positions
             if hasattr(self.bot, 'wheel_manager'):
-                wheel_positions = self.bot.wheel_manager.get_all_positions()
+                wheel_positions = self.bot.wheel_manager.get_all_wheel_positions()
                 wheel_count = len(wheel_positions)
                 print(f"{Fore.CYAN}║{Style.RESET_ALL}  Wheel Positions: {wheel_count}/7{' '*(58-len(str(wheel_count)))}║")
 
