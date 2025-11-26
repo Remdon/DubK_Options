@@ -195,20 +195,47 @@ class BullPutSpreadStrategy:
                     stock_data = candidate.get('stock_data', {})
                     analysis = candidate.get('analysis', {})
                     iv_metrics = analysis.get('iv_metrics', {})
+                    symbol = candidate.get('symbol', 'UNKNOWN')
 
-                    # Get price from stock_data (last_price or close)
-                    price = stock_data.get('last_price') or stock_data.get('close', 0)
+                    # Get price from stock_data - try multiple field names
+                    # OpenBB API may return: last_price, close, price, last, prev_close
+                    price = (
+                        stock_data.get('last_price') or
+                        stock_data.get('price') or
+                        stock_data.get('close') or
+                        stock_data.get('last') or
+                        stock_data.get('prev_close') or
+                        stock_data.get('previous_close') or
+                        0
+                    )
+
+                    # If still no price, try to get from analysis or candidate root level
+                    if price == 0:
+                        price = (
+                            analysis.get('stock_price') or
+                            candidate.get('price') or
+                            0
+                        )
+
+                    if price == 0:
+                        logging.warning(f"[SPREAD] {symbol}: No price found in data structure, skipping")
+                        logging.warning(f"[SPREAD] {symbol}: stock_data keys available: {list(stock_data.keys())}")
+                        logging.warning(f"[SPREAD] {symbol}: stock_data sample: {dict(list(stock_data.items())[:5])}")
+                        continue
 
                     stock_info = {
-                        'symbol': candidate.get('symbol'),
+                        'symbol': symbol,
                         'price': price,
                         'iv_rank': iv_metrics.get('iv_rank', 0),
                         'market_cap': stock_data.get('market_cap', 0),
                         'volume': stock_data.get('volume', 0)
                     }
                     universe.append(stock_info)
+                    logging.debug(f"[SPREAD] {symbol}: Extracted price ${price:.2f}, IV rank {iv_metrics.get('iv_rank', 0):.1f}%")
                 except Exception as e:
-                    logging.debug(f"[SPREAD] Error processing candidate {candidate.get('symbol')}: {e}")
+                    logging.warning(f"[SPREAD] Error processing candidate {candidate.get('symbol')}: {e}")
+                    import traceback
+                    logging.debug(traceback.format_exc())
                     continue
 
             logging.info(f"[SPREAD] Scanner provided {len(universe)} total candidates")
