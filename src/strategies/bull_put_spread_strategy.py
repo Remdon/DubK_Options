@@ -109,48 +109,66 @@ class BullPutSpreadStrategy:
                 'dte': int
             }
         """
-        logging.info(f"[SPREAD] Scanning for bull put spread opportunities...")
+        logging.info(f"[SPREAD] ════════════════════════════════════════════════════════")
+        logging.info(f"[SPREAD] Starting Bull Put Spread Candidate Scan")
+        logging.info(f"[SPREAD] ════════════════════════════════════════════════════════")
 
         # Step 1: Get stock universe from scanner
         try:
             stocks = self._build_stock_universe()
-            logging.info(f"[SPREAD] Built base universe with {len(stocks)} stocks")
+            logging.info(f"[SPREAD] ✓ Built base universe with {len(stocks)} stocks")
         except Exception as e:
-            logging.error(f"[SPREAD] Error building universe: {e}")
+            logging.error(f"[SPREAD] ❌ Error building universe: {e}")
+            import traceback
+            traceback.print_exc()
+            return []
+
+        if not stocks:
+            logging.warning(f"[SPREAD] ❌ No stocks returned from scanner")
             return []
 
         # Step 2: Apply filters
         filtered_stocks = self._apply_filters(stocks)
-        logging.info(f"[SPREAD] After filters: {len(filtered_stocks)} stocks")
+        logging.info(f"[SPREAD] After filters: {len(filtered_stocks)}/{len(stocks)} stocks")
 
         if not filtered_stocks:
-            logging.warning("[SPREAD] No stocks passed filters")
+            logging.warning("[SPREAD] ❌ No stocks passed filters - likely due to low IV rank in calm market")
             return []
 
         # Step 3: Find optimal spreads for each stock
         candidates = []
+        spread_errors = 0
         for stock in filtered_stocks:
             try:
+                logging.info(f"[SPREAD] Searching for spread on {stock['symbol']} @ ${stock['price']:.2f}, IV {stock.get('iv_rank', 0):.1f}%")
                 spread = self._find_optimal_spread(stock)
                 if spread:
                     candidates.append(spread)
+                    logging.info(f"[SPREAD] ✓ Found spread: {spread['symbol']} ${spread['short_strike']:.2f}/${spread['long_strike']:.2f} for ${spread['credit']:.2f} credit")
+                else:
+                    logging.warning(f"[SPREAD] ✗ No valid spread found for {stock['symbol']}")
             except Exception as e:
-                logging.debug(f"[SPREAD] Error finding spread for {stock['symbol']}: {e}")
+                spread_errors += 1
+                logging.warning(f"[SPREAD] ✗ Error finding spread for {stock['symbol']}: {e}")
                 continue
 
         if not candidates:
-            logging.warning("[SPREAD] No spread candidates found")
+            logging.warning(f"[SPREAD] ❌ No spread candidates found from {len(filtered_stocks)} filtered stocks ({spread_errors} errors)")
             return []
 
         # Step 4: Sort by risk-adjusted return (ROI / max_risk)
         candidates.sort(key=lambda x: x['annual_return'] / max(x['max_risk'], 100), reverse=True)
 
-        logging.info(f"[SPREAD] Found {len(candidates)} spread candidates, returning top {max_candidates}")
+        logging.info(f"[SPREAD] ✓ Found {len(candidates)} spread candidates, returning top {max_candidates}")
+        logging.info(f"[SPREAD] ────────────────────────────────────────────────────────")
 
-        # Log top candidates
+        # Log top candidates with details
         for i, candidate in enumerate(candidates[:max_candidates], 1):
-            logging.info(f"[SPREAD]   {i}. {candidate['symbol']}: {candidate['annual_return']:.1f}% annual "
-                        f"(credit ${candidate['credit']:.2f}, risk ${candidate['max_risk']:.0f}, ROI {candidate['roi']:.1f}%)")
+            logging.info(f"[SPREAD]   #{i}: {candidate['symbol']:6s} - {candidate['annual_return']:5.1f}% annual return")
+            logging.info(f"[SPREAD]        Strikes: ${candidate['short_strike']:.2f}/${candidate['long_strike']:.2f}, "
+                        f"Credit: ${candidate['credit']:.2f}, Risk: ${candidate['max_risk']:.0f}, ROI: {candidate['roi']:.1f}%")
+
+        logging.info(f"[SPREAD] ════════════════════════════════════════════════════════")
 
         return candidates[:max_candidates]
 
@@ -211,33 +229,48 @@ class BullPutSpreadStrategy:
         """
         filtered = []
         rejection_reasons = {'price': 0, 'iv_rank': 0, 'market_cap': 0}
+        rejected_details = []
 
         for stock in stocks:
+            symbol = stock.get('symbol', 'UNKNOWN')
+            price = stock.get('price', 0)
+            iv_rank = stock.get('iv_rank', 0)
+            market_cap = stock.get('market_cap', 0)
+
             # Filter by price range
-            if not (self.MIN_STOCK_PRICE <= stock['price'] <= self.MAX_STOCK_PRICE):
+            if not (self.MIN_STOCK_PRICE <= price <= self.MAX_STOCK_PRICE):
                 rejection_reasons['price'] += 1
+                rejected_details.append(f"{symbol}: price ${price:.2f} (need ${self.MIN_STOCK_PRICE}-${self.MAX_STOCK_PRICE})")
                 continue
 
             # Filter by IV rank (spreads need elevated IV to sell premium)
-            if stock.get('iv_rank', 0) < self.MIN_IV_RANK:
+            if iv_rank < self.MIN_IV_RANK:
                 rejection_reasons['iv_rank'] += 1
+                rejected_details.append(f"{symbol}: IV rank {iv_rank:.1f}% (need >={self.MIN_IV_RANK}%)")
                 continue
 
             # Filter by market cap
-            if stock.get('market_cap', 0) < self.MIN_MARKET_CAP:
+            if market_cap < self.MIN_MARKET_CAP:
                 rejection_reasons['market_cap'] += 1
+                rejected_details.append(f"{symbol}: market cap ${market_cap/1e9:.2f}B (need >=${self.MIN_MARKET_CAP/1e9:.1f}B)")
                 continue
 
             filtered.append(stock)
+            logging.info(f"[SPREAD FILTER] ✓ {symbol}: price ${price:.2f}, IV {iv_rank:.1f}%, cap ${market_cap/1e9:.2f}B")
 
-        # Log why stocks were rejected
+        # Log why stocks were rejected with details
         if not filtered:
-            logging.warning(f"[SPREAD] No stocks passed filters. Rejections: "
-                          f"price={rejection_reasons['price']}, "
+            logging.warning(f"[SPREAD] ❌ No stocks passed filters out of {len(stocks)} candidates")
+            logging.warning(f"[SPREAD] Rejections: price={rejection_reasons['price']}, "
                           f"iv_rank={rejection_reasons['iv_rank']} (need >={self.MIN_IV_RANK}%), "
                           f"market_cap={rejection_reasons['market_cap']}")
+            # Log first 5 rejection details for debugging
+            for detail in rejected_details[:5]:
+                logging.warning(f"[SPREAD]   - {detail}")
+            if len(rejected_details) > 5:
+                logging.warning(f"[SPREAD]   ... and {len(rejected_details)-5} more rejections")
         else:
-            logging.info(f"[SPREAD] {len(filtered)}/{len(stocks)} stocks passed filters")
+            logging.info(f"[SPREAD] ✓ {len(filtered)}/{len(stocks)} stocks passed filters")
 
         return filtered
 

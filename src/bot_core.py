@@ -4024,7 +4024,8 @@ Example: AAPL|EXIT|Stock momentum reversed, exit signal"""
         The Bull Put Spread Strategy has 65-75% win rate and defined risk.
         """
         if not self.spread_strategy or not self.spread_manager:
-            logging.debug("[SPREAD] Spread strategy not configured, skipping")
+            logging.warning("[SPREAD] ❌ Spread strategy not configured - check ALPACA_BULL_PUT_KEY environment variables")
+            print(f"{Colors.WARNING}[SPREAD] ❌ Spread strategy not configured{Colors.RESET}")
             return
 
         print(f"\n{Colors.HEADER}[SPREAD STRATEGY] Scanning for bull put spread opportunities...{Colors.RESET}")
@@ -4033,37 +4034,51 @@ Example: AAPL|EXIT|Stock momentum reversed, exit signal"""
         logging.info("="*80)
 
         try:
+            # Log spread account status
+            try:
+                spread_account = self.spread_trading_client.get_account()
+                spread_equity = float(spread_account.equity) if spread_account.equity else 0
+                spread_cash = float(spread_account.cash) if spread_account.cash else 0
+                logging.info(f"[SPREAD] Account Status: Equity=${spread_equity:,.2f}, Cash=${spread_cash:,.2f}")
+                print(f"{Colors.INFO}[SPREAD] Account: ${spread_equity:,.2f} equity, ${spread_cash:,.2f} cash{Colors.RESET}")
+            except Exception as e:
+                logging.warning(f"[SPREAD] Could not fetch account status: {e}")
+
             # Get spread stats
             active_positions = self.spread_manager.get_position_count()
 
             print(f"{Colors.INFO}[SPREAD] Active positions: {active_positions}/{self.spread_strategy.MAX_SPREAD_POSITIONS}{Colors.RESET}")
+            logging.info(f"[SPREAD] Active positions: {active_positions}/{self.spread_strategy.MAX_SPREAD_POSITIONS}")
 
             # Check if we have room for new positions
             if active_positions >= self.spread_strategy.MAX_SPREAD_POSITIONS:
                 print(f"{Colors.WARNING}[SPREAD] Maximum spread positions reached ({active_positions}){Colors.RESET}")
-                logging.info(f"[SPREAD] Maximum spread positions reached ({active_positions})")
+                logging.info(f"[SPREAD] ⚠️  Maximum spread positions reached ({active_positions}/{self.spread_strategy.MAX_SPREAD_POSITIONS})")
                 return
 
             # Check VIX throttle
             if not self.spread_strategy.check_vix_throttle():
                 print(f"{Colors.WARNING}[SPREAD] VIX too high - pausing new spread entries{Colors.RESET}")
+                logging.warning(f"[SPREAD] ⚠️  VIX throttle active - pausing new entries")
                 return
 
             # Calculate how many positions to fill
             positions_to_fill = self.spread_strategy.MAX_SPREAD_POSITIONS - active_positions
             num_candidates = min(positions_to_fill * 2, 10)  # Request 2x candidates, max 10
 
-            print(f"{Colors.INFO}[SPREAD] Scanning for {positions_to_fill} new spread(s)...{Colors.RESET}")
+            print(f"{Colors.INFO}[SPREAD] Scanning for {positions_to_fill} new spread(s) (requesting {num_candidates} candidates)...{Colors.RESET}")
+            logging.info(f"[SPREAD] Positions to fill: {positions_to_fill}, requesting {num_candidates} candidates")
 
             # Find spread candidates
             candidates = self.spread_strategy.find_spread_candidates(max_candidates=num_candidates)
 
             if not candidates:
-                print(f"{Colors.WARNING}[SPREAD] No spread candidates found{Colors.RESET}")
-                logging.info("[SPREAD] No spread candidates found")
+                print(f"{Colors.WARNING}[SPREAD] No spread candidates found - market may be too calm (low IV){Colors.RESET}")
+                logging.warning("[SPREAD] ❌ No spread candidates found - check logs above for filter rejections")
                 return
 
-            print(f"{Colors.SUCCESS}[SPREAD] Found {len(candidates)} spread candidates{Colors.RESET}\n")
+            print(f"{Colors.SUCCESS}[SPREAD] ✓ Found {len(candidates)} spread candidates{Colors.RESET}\n")
+            logging.info(f"[SPREAD] ✓ Found {len(candidates)} spread candidates")
 
             # Execute spreads
             positions_filled = 0
@@ -4110,7 +4125,9 @@ Example: AAPL|EXIT|Stock momentum reversed, exit signal"""
 
     def _execute_bull_put_spread(self, spread: Dict, contracts: int) -> bool:
         """
-        Execute bull put spread order.
+        Execute bull put spread order using individual leg orders.
+
+        Bull Put Spread = Sell higher strike put + Buy lower strike put
 
         Args:
             spread: Spread candidate dict from strategy
@@ -4127,14 +4144,61 @@ Example: AAPL|EXIT|Stock momentum reversed, exit signal"""
             long_strike = spread['long_strike']
             credit = spread['credit']
 
-            # For now, just log the trade (multi-leg order execution needs enhancement)
-            logging.info(f"[SPREAD] {symbol}: Would execute {contracts}x bull put spread")
-            logging.info(f"[SPREAD]   Short: {short_put_symbol} @ ${short_strike:.2f}")
-            logging.info(f"[SPREAD]   Long: {long_put_symbol} @ ${long_strike:.2f}")
-            logging.info(f"[SPREAD]   Credit: ${credit:.2f} per spread")
+            logging.info(f"[SPREAD] ═══════════════════════════════════════════════════")
+            logging.info(f"[SPREAD] Executing {contracts}x bull put spread on {symbol}")
+            logging.info(f"[SPREAD] ═══════════════════════════════════════════════════")
+            logging.info(f"[SPREAD]   Short Put: {short_put_symbol} @ ${short_strike:.2f}")
+            logging.info(f"[SPREAD]   Long Put:  {long_put_symbol} @ ${long_strike:.2f}")
+            logging.info(f"[SPREAD]   Target Credit: ${credit:.2f} per spread")
+            logging.info(f"[SPREAD]   Total Credit: ${credit * contracts:.2f}")
 
-            # TODO: Implement multi-leg order execution
-            # For now, create database entry to track
+            from alpaca.trading.requests import LimitOrderRequest
+            from alpaca.trading.enums import OrderSide, TimeInForce
+
+            # Calculate limit prices (use 90% of estimated credit for better fills)
+            short_put_price = round((credit * 0.6), 2)  # Estimate: short put is ~60% of credit
+            long_put_price = round((credit * 0.4), 2)   # Estimate: long put is ~40% of credit
+
+            # LEG 1: SELL the higher strike put (short leg - collect premium)
+            logging.info(f"[SPREAD] Placing SHORT put order: {short_put_symbol}")
+            short_order_request = LimitOrderRequest(
+                symbol=short_put_symbol,
+                qty=contracts,
+                side=OrderSide.SELL,
+                time_in_force=TimeInForce.DAY,
+                limit_price=short_put_price
+            )
+
+            short_order = self.spread_trading_client.submit_order(short_order_request)
+
+            if not short_order:
+                logging.error(f"[SPREAD] ❌ Failed to place short put order")
+                return False
+
+            logging.info(f"[SPREAD] ✓ Short put order placed - Order ID: {short_order.id}")
+            print(f"{Colors.SUCCESS}[SPREAD] ✓ Short put order placed - Order ID: {short_order.id}{Colors.RESET}")
+
+            # LEG 2: BUY the lower strike put (long leg - define max risk)
+            logging.info(f"[SPREAD] Placing LONG put order: {long_put_symbol}")
+            long_order_request = LimitOrderRequest(
+                symbol=long_put_symbol,
+                qty=contracts,
+                side=OrderSide.BUY,
+                time_in_force=TimeInForce.DAY,
+                limit_price=long_put_price
+            )
+
+            long_order = self.spread_trading_client.submit_order(long_order_request)
+
+            if not long_order:
+                logging.error(f"[SPREAD] ❌ Failed to place long put order")
+                logging.warning(f"[SPREAD] ⚠️  Short put order is open - monitor position manually!")
+                return False
+
+            logging.info(f"[SPREAD] ✓ Long put order placed - Order ID: {long_order.id}")
+            print(f"{Colors.SUCCESS}[SPREAD] ✓ Long put order placed - Order ID: {long_order.id}{Colors.RESET}")
+
+            # Create database entry to track the spread
             spread_id = self.spread_manager.create_spread_position(
                 symbol=symbol,
                 short_strike=short_strike,
@@ -4146,20 +4210,22 @@ Example: AAPL|EXIT|Stock momentum reversed, exit signal"""
                 expiration=spread['expiration'],
                 entry_dte=spread['dte'],
                 entry_delta=spread.get('probability_profit', 70) / 100,
-                notes=f"Auto-generated spread - {spread['annual_return']:.1f}% annual return"
+                notes=f"Auto-generated spread - {spread['annual_return']:.1f}% annual return. "
+                      f"Short order: {short_order.id}, Long order: {long_order.id}"
             )
 
-            print(f"{Colors.SUCCESS}[SPREAD] {symbol}: Spread position #{spread_id} created in database{Colors.RESET}")
-            logging.info(f"[SPREAD] {symbol}: Created spread position #{spread_id}")
-
-            # NOTE: Actual order execution would go here
-            # This would require multi-leg order support from Alpaca
-            # For paper trading, we're tracking in database only
+            logging.info(f"[SPREAD] ✓ Spread position #{spread_id} created in database")
+            logging.info(f"[SPREAD] ═══════════════════════════════════════════════════")
+            print(f"{Colors.SUCCESS}[SPREAD] ✓ {symbol}: Bull put spread executed successfully!{Colors.RESET}")
+            print(f"{Colors.INFO}[SPREAD]   Spread ID: #{spread_id}{Colors.RESET}")
+            print(f"{Colors.INFO}[SPREAD]   Short Order: {short_order.id}{Colors.RESET}")
+            print(f"{Colors.INFO}[SPREAD]   Long Order: {long_order.id}{Colors.RESET}")
 
             return True
 
         except Exception as e:
-            logging.error(f"[SPREAD] Error executing spread: {e}", exc_info=True)
+            logging.error(f"[SPREAD] ❌ Error executing bull put spread: {e}", exc_info=True)
+            print(f"{Colors.ERROR}[SPREAD] ❌ Error executing spread: {str(e)}{Colors.RESET}")
             return False
 
     def _execute_wheel_put_sale(self, symbol: str, put_details: Dict, contracts: int) -> bool:
