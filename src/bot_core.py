@@ -4571,9 +4571,9 @@ Example: AAPL|EXIT|Stock momentum reversed, exit signal"""
 
     def _close_spread_position(self, position: Dict, reason: str) -> bool:
         """
-        Close spread position by updating database.
-        For paper trading, we update the database only.
-        For live trading, this would execute a buy-to-close order.
+        Close spread position by executing buy-to-close orders for both legs.
+
+        Bull Put Spread Close = Buy back short put + Sell back long put
 
         Args:
             position: Spread position dict
@@ -4585,27 +4585,92 @@ Example: AAPL|EXIT|Stock momentum reversed, exit signal"""
         try:
             symbol = position['symbol']
             spread_id = position['id']
+            short_put_symbol = position['short_put_symbol']
+            long_put_symbol = position['long_put_symbol']
+            num_contracts = position['num_contracts']
 
-            # Get current exit price
+            logging.info(f"[SPREAD CLOSE] ═══════════════════════════════════════════════════")
+            logging.info(f"[SPREAD CLOSE] Closing {symbol} spread - Reason: {reason}")
+            logging.info(f"[SPREAD CLOSE] ═══════════════════════════════════════════════════")
+
+            # Get current exit price before closing
             exit_price = self._get_spread_current_value(position)
 
-            # Close position in database
+            from alpaca.trading.requests import LimitOrderRequest
+            from alpaca.trading.enums import OrderSide, TimeInForce
+
+            # Get current option prices for limit orders
+            options = self.spread_strategy._get_options_chain(symbol)
+            expiration = position['expiration']
+            short_strike = position['short_strike']
+            long_strike = position['long_strike']
+
+            short_put = None
+            long_put = None
+
+            for opt in options:
+                if (opt['type'] == 'put' and opt['expiration'] == expiration and
+                    abs(opt['strike'] - short_strike) < 0.01):
+                    short_put = opt
+                elif (opt['type'] == 'put' and opt['expiration'] == expiration and
+                      abs(opt['strike'] - long_strike) < 0.01):
+                    long_put = opt
+
+            # LEG 1: BUY TO CLOSE the short put (we sold this, now buying back)
+            if short_put:
+                short_close_price = round(short_put['ask'] * 1.05, 2)  # Pay 5% over ask for quick fill
+            else:
+                short_close_price = 0.50  # Fallback price
+
+            logging.info(f"[SPREAD CLOSE] Buying to close SHORT put: {short_put_symbol}")
+            short_close_order = LimitOrderRequest(
+                symbol=short_put_symbol,
+                qty=num_contracts,
+                side=OrderSide.BUY,  # Buy to close the short position
+                time_in_force=TimeInForce.DAY,
+                limit_price=short_close_price
+            )
+
+            short_order = self.spread_trading_client.submit_order(short_close_order)
+            logging.info(f"[SPREAD CLOSE] ✓ Short put buy-to-close order placed - Order ID: {short_order.id}")
+
+            # LEG 2: SELL TO CLOSE the long put (we bought this, now selling back)
+            if long_put:
+                long_close_price = round(long_put['bid'] * 0.95, 2)  # Accept 5% below bid for quick fill
+            else:
+                long_close_price = 0.10  # Fallback price
+
+            logging.info(f"[SPREAD CLOSE] Selling to close LONG put: {long_put_symbol}")
+            long_close_order = LimitOrderRequest(
+                symbol=long_put_symbol,
+                qty=num_contracts,
+                side=OrderSide.SELL,  # Sell to close the long position
+                time_in_force=TimeInForce.DAY,
+                limit_price=long_close_price
+            )
+
+            long_order = self.spread_trading_client.submit_order(long_close_order)
+            logging.info(f"[SPREAD CLOSE] ✓ Long put sell-to-close order placed - Order ID: {long_order.id}")
+
+            # Update database with close details
             self.spread_manager.close_spread_position(
                 spread_id=spread_id,
                 exit_price=exit_price,
                 exit_reason=reason
             )
 
-            logging.info(f"[SPREAD] {symbol}: Closed spread position #{spread_id} - {reason}")
-            print(f"{Colors.SUCCESS}✓ [SPREAD] {symbol}: Position closed - {reason}{Colors.RESET}")
+            logging.info(f"[SPREAD CLOSE] ✓ Spread position #{spread_id} closed - {reason}")
+            logging.info(f"[SPREAD CLOSE] ═══════════════════════════════════════════════════")
 
-            # NOTE: Actual multi-leg close order would go here for live trading
-            # For now (paper trading), we just update the database
+            print(f"{Colors.SUCCESS}✓ [SPREAD EXIT] {symbol}: Position closed - {reason}{Colors.RESET}")
+            print(f"{Colors.INFO}[SPREAD EXIT]   Short close order: {short_order.id}{Colors.RESET}")
+            print(f"{Colors.INFO}[SPREAD EXIT]   Long close order: {long_order.id}{Colors.RESET}")
 
             return True
 
         except Exception as e:
-            logging.error(f"[SPREAD] Error closing spread position: {e}", exc_info=True)
+            logging.error(f"[SPREAD CLOSE] ❌ Error closing spread position: {e}", exc_info=True)
+            print(f"{Colors.ERROR}[SPREAD EXIT] ❌ Failed to close {position['symbol']}: {str(e)}{Colors.RESET}")
             return False
 
     def _execute_wheel_call_sale(self, symbol: str, call_details: Dict) -> bool:
