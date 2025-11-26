@@ -148,14 +148,23 @@ class WheelStrategy:
             else:
                 logging.debug(f"[WHEEL] {symbol} rejected: {reason}")
 
-        # Sort by expected annual return (highest first)
-        candidates = sorted(candidates, key=lambda x: x['annual_return'], reverse=True)
+        # Score and rank candidates using multi-factor scoring
+        for candidate in candidates:
+            candidate['quality_score'] = self._calculate_quality_score(candidate)
+
+        # Sort by quality score (highest first) - considers multiple factors beyond just return
+        candidates = sorted(candidates, key=lambda x: x['quality_score'], reverse=True)
 
         if candidates:
-            logging.info(f"[WHEEL] Found {len(candidates)} wheel candidates, returning top {max_candidates}")
+            logging.info(f"[WHEEL] Found {len(candidates)} wheel candidates, ranking by quality score...")
+            logging.info(f"[WHEEL] ════════════════════════════════════════════════════════")
             for i, c in enumerate(candidates[:max_candidates], 1):
-                logging.info(f"[WHEEL]   {i}. {c['symbol']}: {c['annual_return']:.1%} annual "
-                           f"(put ${c['put_strike']:.2f} for ${c['put_premium']:.2f})")
+                logging.info(f"[WHEEL]   #{i}: {c['symbol']:6s} - Score: {c['quality_score']:.1f}/100")
+                logging.info(f"[WHEEL]        Annual Return: {c['annual_return']:.1%}, "
+                           f"Put: ${c['put_strike']:.2f} @ ${c['put_premium']:.2f}, "
+                           f"IV Rank: {c['iv_rank']:.0f}%")
+            logging.info(f"[WHEEL] ════════════════════════════════════════════════════════")
+            logging.info(f"[WHEEL] Returning top {max_candidates} candidates sorted best to worst")
         else:
             logging.warning(f"[WHEEL] No wheel candidates found matching criteria")
 
@@ -504,6 +513,80 @@ class WheelStrategy:
         except Exception as e:
             logging.error(f"[WHEEL] {symbol}: Error finding call to sell: {e}")
             return None
+
+    def _calculate_quality_score(self, candidate: Dict) -> float:
+        """
+        Calculate a quality score for a wheel candidate using multiple factors.
+
+        Scoring Factors (0-100 scale):
+        - Annual Return (40%): Higher returns = higher score
+        - IV Rank (30%): Sweet spot 60-80%, penalize extremes
+        - Market Cap (15%): Larger = more stable (capped at $500B)
+        - Beta (15%): Lower volatility preferred (1.0 = neutral, <1.5 good)
+
+        Returns:
+            Quality score from 0-100 (higher is better)
+        """
+        # Factor 1: Annual Return (40% weight)
+        # Scale: 15% = 50 points, 30% = 75 points, 50%+ = 100 points
+        annual_return = candidate.get('annual_return', 0)
+        return_score = min(100, (annual_return / 0.50) * 100)  # 50% annual = max score
+
+        # Factor 2: IV Rank (30% weight)
+        # Sweet spot: 60-80% IV rank (max score)
+        # Penalty for too low (<50%) or too high (>90%)
+        iv_rank = candidate.get('iv_rank', 0)
+        if 60 <= iv_rank <= 80:
+            iv_score = 100  # Sweet spot
+        elif 50 <= iv_rank < 60:
+            iv_score = 80 + (iv_rank - 50) * 2  # 80-100 scale
+        elif 80 < iv_rank <= 90:
+            iv_score = 100 - (iv_rank - 80) * 2  # 100-80 scale
+        elif iv_rank > 90:
+            iv_score = max(50, 80 - (iv_rank - 90) * 3)  # Penalize extreme IV
+        else:  # iv_rank < 50
+            iv_score = max(30, iv_rank * 1.6)  # Scale from 0-80
+
+        # Factor 3: Market Cap (15% weight)
+        # Preference for larger, more stable companies
+        # Scale: $2B = 50 points, $10B = 75 points, $100B+ = 100 points
+        market_cap = candidate.get('market_cap', 0)
+        if market_cap > 0:
+            market_cap_billions = market_cap / 1e9
+            if market_cap_billions >= 100:
+                cap_score = 100
+            elif market_cap_billions >= 10:
+                cap_score = 75 + (min(market_cap_billions, 100) - 10) / 90 * 25
+            else:
+                cap_score = 50 + (market_cap_billions - 2) / 8 * 25
+            cap_score = max(30, min(100, cap_score))
+        else:
+            cap_score = 50  # Default if no market cap data
+
+        # Factor 4: Beta (15% weight)
+        # Lower volatility preferred: 0.8-1.2 = ideal, >1.5 = penalty
+        beta = candidate.get('beta', 1.0)
+        if beta is None:
+            beta = 1.0
+
+        if 0.8 <= beta <= 1.2:
+            beta_score = 100  # Low volatility sweet spot
+        elif beta < 0.8:
+            beta_score = 85 + (beta / 0.8) * 15  # Bonus for very low beta
+        elif 1.2 < beta <= 1.5:
+            beta_score = 100 - (beta - 1.2) * 50  # 100 -> 85 scale
+        else:  # beta > 1.5
+            beta_score = max(40, 85 - (beta - 1.5) * 30)  # Penalize high beta
+
+        # Calculate weighted total score
+        quality_score = (
+            return_score * 0.40 +
+            iv_score * 0.30 +
+            cap_score * 0.15 +
+            beta_score * 0.15
+        )
+
+        return round(quality_score, 1)
 
     # =========================================================================
     # RISK MANAGEMENT METHODS (Added Nov 2025 based on live trade analysis)

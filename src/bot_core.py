@@ -3926,12 +3926,16 @@ Example: AAPL|EXIT|Stock momentum reversed, exit signal"""
                 print(f"{Colors.DIM}[WHEEL] No wheel candidates found matching criteria{Colors.RESET}")
                 return
 
-            print(f"{Colors.SUCCESS}[WHEEL] Found {len(candidates)} wheel candidates:{Colors.RESET}\n")
+            print(f"{Colors.SUCCESS}[WHEEL] Found {len(candidates)} wheel candidates (ranked best to worst):{Colors.RESET}\n")
 
             for i, candidate in enumerate(candidates, 1):
+                quality_score = candidate.get('quality_score', 0)
+                score_color = Colors.SUCCESS if quality_score >= 75 else Colors.INFO if quality_score >= 60 else Colors.WARNING
+
                 print(f"  {i}. {candidate['symbol']:6} @ ${candidate['stock_price']:.2f} | "
-                      f"IV rank {candidate['iv_rank']:.0f}% | "
-                      f"{candidate['annual_return']:.1%} annual return")
+                      f"{score_color}Score: {quality_score:.1f}/100{Colors.RESET} | "
+                      f"IV {candidate['iv_rank']:.0f}% | "
+                      f"{candidate['annual_return']:.1%} annual")
                 print(f"{Colors.DIM}     Put: ${candidate['put_strike']:.2f} strike for ${candidate['put_premium']:.2f} premium{Colors.RESET}")
 
             # Try to fill multiple positions in one scan
