@@ -350,6 +350,16 @@ class BullPutSpreadStrategy:
                           f"(15% OTM from ${stock_price:.2f})")
             return None
 
+        # Validate short strike delta (should be -0.20 to -0.40 for 10-20% OTM)
+        short_delta = short_put.get('delta', 0)
+        if short_delta != 0:  # Only validate if delta is available
+            if not (-0.40 <= short_delta <= -0.15):
+                logging.warning(f"[SPREAD] {symbol}: Short put delta {short_delta:.3f} outside optimal range "
+                              f"(-0.40 to -0.15). May not be properly OTM.")
+                # Continue anyway - delta might be stale or inaccurate
+            else:
+                logging.debug(f"[SPREAD] {symbol}: Short put delta {short_delta:.3f} ✓ (within optimal range)")
+
         # Find long strike (SPREAD_WIDTH below short strike)
         long_strike_target = short_put['strike'] - self.SPREAD_WIDTH
         long_put = self._find_closest_strike(puts, long_strike_target, 'long')
@@ -554,32 +564,44 @@ class BullPutSpreadStrategy:
 
     def calculate_position_size(self, spread: Dict, available_capital: float) -> int:
         """
-        Calculate number of contracts for this spread.
+        Calculate number of contracts for this spread based on account size and risk limits.
+
+        Position Sizing Rules:
+        1. Max 10% of account value per spread (MAX_CAPITAL_PER_POSITION)
+        2. Max $500 risk per spread (MAX_CAPITAL_PER_SPREAD)
+        3. Use the more conservative of the two limits
 
         Args:
-            spread: Spread candidate dict
-            available_capital: Available capital in account
+            spread: Spread candidate dict with 'max_risk' field
+            available_capital: Total account portfolio value
 
         Returns:
-            Number of contracts (spreads)
+            Number of contracts (minimum 1, maximum based on risk limits)
         """
-        # Calculate capital per contract
+        symbol = spread['symbol']
         capital_per_contract = spread['max_risk']
 
-        # Max contracts based on position limit
-        max_contracts_by_limit = int((available_capital * self.MAX_CAPITAL_PER_POSITION) / capital_per_contract)
+        # Rule 1: Max contracts based on % of portfolio
+        max_contracts_by_pct = int((available_capital * self.MAX_CAPITAL_PER_POSITION) / capital_per_contract)
 
-        # Max contracts based on absolute max risk
+        # Rule 2: Max contracts based on absolute max risk per spread
         max_contracts_by_risk = int(self.MAX_CAPITAL_PER_SPREAD / capital_per_contract)
 
-        # Use the smaller of the two
-        contracts = min(max_contracts_by_limit, max_contracts_by_risk)
+        # Use the smaller (more conservative) of the two
+        contracts = min(max_contracts_by_pct, max_contracts_by_risk)
 
-        # Minimum 1 contract
+        # Minimum 1 contract (always trade at least 1 spread if qualified)
         contracts = max(1, contracts)
 
-        logging.info(f"[SPREAD] Position size for {spread['symbol']}: {contracts} contracts "
-                    f"(${capital_per_contract * contracts:.0f} capital required)")
+        # Calculate actual capital required
+        capital_required = capital_per_contract * contracts
+        pct_of_account = (capital_required / available_capital * 100) if available_capital > 0 else 0
+
+        logging.info(f"[SPREAD] Position size for {symbol}: {contracts} contract(s)")
+        logging.info(f"[SPREAD]   Capital required: ${capital_required:.0f} ({pct_of_account:.1f}% of ${available_capital:,.0f} account)")
+        logging.info(f"[SPREAD]   Max risk per contract: ${capital_per_contract:.0f}")
+        logging.info(f"[SPREAD]   Limit by % of account: {max_contracts_by_pct} contracts")
+        logging.info(f"[SPREAD]   Limit by max risk: {max_contracts_by_risk} contracts")
 
         return contracts
 
@@ -601,7 +623,36 @@ class BullPutSpreadStrategy:
             return True
 
     def _get_vix(self) -> float:
-        """Get current VIX level"""
-        # Implementation depends on your data source
-        # For now, return 15 (typical low-vol level)
-        return 15.0
+        """
+        Get current VIX level from market data.
+
+        Returns:
+            Current VIX value, or 15.0 as fallback if fetch fails
+        """
+        try:
+            vix_data = self.openbb_client.get_quote('VIX')
+
+            if not vix_data or 'results' not in vix_data:
+                logging.warning(f"[SPREAD] No VIX data returned, using fallback 15.0")
+                return 15.0
+
+            results = vix_data['results']
+
+            # Handle both list and dict response formats
+            if isinstance(results, list) and len(results) > 0:
+                vix_price = results[0].get('last_price') or results[0].get('close') or results[0].get('price')
+            elif isinstance(results, dict):
+                vix_price = results.get('last_price') or results.get('close') or results.get('price')
+            else:
+                vix_price = None
+
+            if vix_price and vix_price > 0:
+                logging.debug(f"[SPREAD] VIX fetched: {vix_price:.2f}")
+                return float(vix_price)
+            else:
+                logging.warning(f"[SPREAD] Invalid VIX data, using fallback 15.0")
+                return 15.0
+
+        except Exception as e:
+            logging.warning(f"[SPREAD] Error fetching VIX (using fallback 15.0): {e}")
+            return 15.0
