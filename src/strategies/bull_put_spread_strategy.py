@@ -318,20 +318,26 @@ class BullPutSpreadStrategy:
         try:
             options_chain = self._get_options_chain(symbol)
             if not options_chain:
+                logging.warning(f"[SPREAD] {symbol}: No options chain available")
                 return None
         except Exception as e:
-            logging.debug(f"[SPREAD] Error getting options for {symbol}: {e}")
+            logging.warning(f"[SPREAD] {symbol}: Error getting options chain: {e}")
             return None
 
         # Find target DTE expiration
         target_expiration = self._find_target_expiration(options_chain)
         if not target_expiration:
+            expirations = sorted(set(opt['expiration'] for opt in options_chain))
+            dtes = [(exp, (datetime.strptime(exp, '%Y-%m-%d') - datetime.now()).days) for exp in expirations[:3]]
+            logging.warning(f"[SPREAD] {symbol}: No expiration in {self.MIN_DTE}-{self.MAX_DTE} DTE range. "
+                          f"Available: {dtes}")
             return None
 
         # Get puts for target expiration
         puts = [opt for opt in options_chain if opt['expiration'] == target_expiration and opt['type'] == 'put']
 
         if len(puts) < 2:
+            logging.warning(f"[SPREAD] {symbol}: Only {len(puts)} put(s) available for {target_expiration}, need at least 2")
             return None
 
         # Find short strike (25-35% OTM, delta around -0.25 to -0.35)
@@ -339,6 +345,8 @@ class BullPutSpreadStrategy:
         short_put = self._find_closest_strike(puts, short_strike_target, 'short')
 
         if not short_put:
+            logging.warning(f"[SPREAD] {symbol}: No short put found near ${short_strike_target:.2f} "
+                          f"(25% OTM from ${stock_price:.2f})")
             return None
 
         # Find long strike (SPREAD_WIDTH below short strike)
@@ -346,6 +354,8 @@ class BullPutSpreadStrategy:
         long_put = self._find_closest_strike(puts, long_strike_target, 'long')
 
         if not long_put:
+            logging.warning(f"[SPREAD] {symbol}: No long put found near ${long_strike_target:.2f} "
+                          f"(${self.SPREAD_WIDTH:.0f} below short ${short_put['strike']:.2f})")
             return None
 
         # Calculate spread metrics
@@ -363,11 +373,12 @@ class BullPutSpreadStrategy:
 
         # Validate spread
         if credit < self.MIN_CREDIT:
-            logging.debug(f"[SPREAD] {symbol}: Credit ${credit:.2f} below minimum ${self.MIN_CREDIT:.2f}")
+            logging.warning(f"[SPREAD] {symbol}: Credit ${credit:.2f} (short bid ${short_premium:.2f} - long ask ${long_premium:.2f}) "
+                          f"below minimum ${self.MIN_CREDIT:.2f}")
             return None
 
         if max_risk > self.MAX_CAPITAL_PER_SPREAD:
-            logging.debug(f"[SPREAD] {symbol}: Max risk ${max_risk:.0f} exceeds limit ${self.MAX_CAPITAL_PER_SPREAD:.0f}")
+            logging.warning(f"[SPREAD] {symbol}: Max risk ${max_risk:.0f} exceeds limit ${self.MAX_CAPITAL_PER_SPREAD:.0f}")
             return None
 
         # Estimate probability of profit (based on delta)
