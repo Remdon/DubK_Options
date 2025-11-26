@@ -4230,9 +4230,20 @@ Example: AAPL|EXIT|Stock momentum reversed, exit signal"""
             from alpaca.trading.requests import LimitOrderRequest
             from alpaca.trading.enums import OrderSide, TimeInForce
 
-            # Calculate limit prices (use 90% of estimated credit for better fills)
-            short_put_price = round((credit * 0.6), 2)  # Estimate: short put is ~60% of credit
-            long_put_price = round((credit * 0.4), 2)   # Estimate: long put is ~40% of credit
+            # Use ACTUAL market prices from the spread dict (not estimates!)
+            short_put_bid = spread.get('short_put_bid', credit * 0.6)
+            short_put_ask = spread.get('short_put_ask', credit * 0.7)
+            long_put_bid = spread.get('long_put_bid', credit * 0.3)
+            long_put_ask = spread.get('long_put_ask', credit * 0.4)
+
+            # Calculate limit prices for better fill rates
+            # Short: Sell at 95% of bid (slightly below bid for better fill)
+            # Long: Buy at 105% of ask (slightly above ask for better fill)
+            short_put_price = round(short_put_bid * 0.95, 2)
+            long_put_price = round(long_put_ask * 1.05, 2)
+
+            logging.info(f"[SPREAD] Market prices - Short bid: ${short_put_bid:.2f}, Long ask: ${long_put_ask:.2f}")
+            logging.info(f"[SPREAD] Order prices - Short limit: ${short_put_price:.2f} (95% of bid), Long limit: ${long_put_price:.2f} (105% of ask)")
 
             # LEG 1: SELL the higher strike put (short leg - collect premium)
             logging.info(f"[SPREAD] Placing SHORT put order: {short_put_symbol}")

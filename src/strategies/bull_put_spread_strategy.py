@@ -412,7 +412,12 @@ class BullPutSpreadStrategy:
             'expiration': target_expiration,
             'short_put_symbol': short_put['symbol'],
             'long_put_symbol': long_put['symbol'],
-            'liquidity_score': min(short_put.get('volume', 0), long_put.get('volume', 0))
+            'liquidity_score': min(short_put.get('volume', 0), long_put.get('volume', 0)),
+            # Add actual market prices for order execution
+            'short_put_bid': short_premium,
+            'short_put_ask': short_put['ask'],
+            'long_put_bid': long_put['bid'],
+            'long_put_ask': long_premium
         }
 
     def _get_options_chain(self, symbol: str) -> List[Dict]:
