@@ -525,12 +525,45 @@ class OptionsBot:
                             long_strike = spread['long_strike']
                             num_contracts = spread['num_contracts']
                             total_credit = spread['total_credit']
-                            current_value = spread.get('current_value', total_credit)
-                            unrealized_pnl = spread.get('unrealized_pnl', 0)
-                            unrealized_pnl_pct = spread.get('unrealized_pnl_pct', 0)
                             max_profit = spread['max_profit']
                             max_risk = spread['max_risk']
                             expiration = spread['expiration']
+                            short_put_symbol = spread['short_put_symbol']
+                            long_put_symbol = spread['long_put_symbol']
+
+                            # Fetch LIVE option prices from Alpaca to calculate actual P&L
+                            try:
+                                # Get current positions from Alpaca
+                                alpaca_positions = self.spread_trading_client.get_all_positions()
+
+                                short_current_price = 0
+                                long_current_price = 0
+
+                                # Find matching positions
+                                for pos in alpaca_positions:
+                                    if pos.symbol == short_put_symbol:
+                                        short_current_price = float(pos.current_price) if pos.current_price else 0
+                                    elif pos.symbol == long_put_symbol:
+                                        long_current_price = float(pos.current_price) if pos.current_price else 0
+
+                                # Calculate current spread value (what it costs to close)
+                                # For bull put spread: bought back short put - sold long put
+                                current_value = short_current_price - long_current_price
+
+                                # Calculate P&L: credit received - current cost to close
+                                credit_per_spread = total_credit / num_contracts if num_contracts > 0 else total_credit
+                                unrealized_pnl = (credit_per_spread - current_value) * 100 * num_contracts
+                                unrealized_pnl_pct = ((credit_per_spread - current_value) / credit_per_spread * 100) if credit_per_spread > 0 else 0
+
+                                # Update database with live values
+                                self.spread_manager.update_spread_value(spread['id'], current_value)
+
+                            except Exception as e:
+                                logging.warning(f"Could not fetch live prices for {symbol} spread: {e}")
+                                # Fall back to database values
+                                current_value = spread.get('current_value', total_credit)
+                                unrealized_pnl = spread.get('unrealized_pnl', 0)
+                                unrealized_pnl_pct = spread.get('unrealized_pnl_pct', 0)
 
                             # Calculate DTE
                             try:
