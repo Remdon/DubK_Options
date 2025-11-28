@@ -4335,7 +4335,7 @@ Example: AAPL|EXIT|Stock momentum reversed, exit signal"""
                 qty=contracts,
                 side=OrderSide.BUY,  # For credit spread, use BUY side with negative limit price
                 time_in_force=TimeInForce.DAY,
-                order_class=OrderClass.MULTILEG,
+                order_class=OrderClass.MLEG,  # Multi-leg order (not MULTILEG!)
                 limit_price=net_credit_limit,  # Net credit we want to receive
                 legs=[short_leg, long_leg]
             )
