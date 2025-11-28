@@ -531,29 +531,34 @@ class OptionsBot:
                             short_put_symbol = spread['short_put_symbol']
                             long_put_symbol = spread['long_put_symbol']
 
-                            # Fetch LIVE option prices from Alpaca to calculate actual P&L
+                            # Fetch LIVE P&L from Alpaca positions (more accurate than calculating)
                             try:
                                 # Get current positions from Alpaca
                                 alpaca_positions = self.spread_trading_client.get_all_positions()
 
+                                short_leg_pnl = 0
+                                long_leg_pnl = 0
                                 short_current_price = 0
                                 long_current_price = 0
 
-                                # Find matching positions
+                                # Find matching positions and get their P&L directly from Alpaca
                                 for pos in alpaca_positions:
                                     if pos.symbol == short_put_symbol:
+                                        short_leg_pnl = float(pos.unrealized_pl) if pos.unrealized_pl else 0
                                         short_current_price = float(pos.current_price) if pos.current_price else 0
                                     elif pos.symbol == long_put_symbol:
+                                        long_leg_pnl = float(pos.unrealized_pl) if pos.unrealized_pl else 0
                                         long_current_price = float(pos.current_price) if pos.current_price else 0
 
-                                # Calculate current spread value (what it costs to close)
-                                # For bull put spread: bought back short put - sold long put
+                                # Total spread P&L is sum of both legs (Alpaca already calculated correctly)
+                                unrealized_pnl = short_leg_pnl + long_leg_pnl
+
+                                # Calculate current spread value for display
                                 current_value = short_current_price - long_current_price
 
-                                # Calculate P&L: credit received - current cost to close
+                                # Calculate P&L percentage based on credit received
                                 credit_per_spread = total_credit / num_contracts if num_contracts > 0 else total_credit
-                                unrealized_pnl = (credit_per_spread - current_value) * 100 * num_contracts
-                                unrealized_pnl_pct = ((credit_per_spread - current_value) / credit_per_spread * 100) if credit_per_spread > 0 else 0
+                                unrealized_pnl_pct = (unrealized_pnl / (credit_per_spread * 100) * 100) if credit_per_spread > 0 else 0
 
                                 # Update database with live values
                                 self.spread_manager.update_spread_value(spread['id'], current_value)
