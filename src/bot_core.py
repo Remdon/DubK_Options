@@ -31,6 +31,7 @@ from alpaca.trading.enums import OrderSide, OrderType, TimeInForce, QueryOrderSt
 from alpaca.trading.requests import LimitOrderRequest, OptionLegRequest, GetOrdersRequest
 import statistics
 import pytz
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # Import modular components
 from config import config
@@ -2636,16 +2637,32 @@ Example: AAPL|EXIT|Stock momentum reversed, exit signal"""
         )
 
         if should_wheel_scan:
-            print(f"{Colors.HEADER}[30-MIN SCAN] Wheel Strategy Scan...{Colors.RESET}")
-            logging.info(f"=== 30-MINUTE WHEEL STRATEGY SCAN ===")
+            print(f"{Colors.HEADER}[30-MIN SCAN] Running Wheel and Spread Scans in Parallel...{Colors.RESET}")
+            logging.info(f"=== 30-MINUTE STRATEGY SCANS (PARALLEL EXECUTION) ===")
 
-            # WHEEL STRATEGY: Scan for systematic premium collection opportunities
-            self.execute_wheel_opportunities()
+            # Run both scans in parallel using ThreadPoolExecutor
+            with ThreadPoolExecutor(max_workers=2) as executor:
+                futures = {}
 
-            # SPREAD STRATEGY: Scan for bull put spread opportunities (separate account)
-            if self.spread_strategy:
-                self.execute_spread_opportunities()
+                # Submit wheel strategy scan
+                futures['wheel'] = executor.submit(self.execute_wheel_opportunities)
+                logging.info("[PARALLEL SCAN] Wheel strategy scan started")
 
+                # Submit spread strategy scan if enabled
+                if self.spread_strategy:
+                    futures['spread'] = executor.submit(self.execute_spread_opportunities)
+                    logging.info("[PARALLEL SCAN] Spread strategy scan started")
+
+                # Wait for both scans to complete and handle any errors
+                for strategy_name, future in futures.items():
+                    try:
+                        future.result()  # This blocks until the scan completes
+                        logging.info(f"[PARALLEL SCAN] {strategy_name.capitalize()} strategy scan completed successfully")
+                    except Exception as e:
+                        logging.error(f"[PARALLEL SCAN] {strategy_name.capitalize()} strategy scan failed: {e}")
+                        print(f"{Colors.ERROR}[ERROR] {strategy_name.capitalize()} scan failed: {e}{Colors.RESET}")
+
+            print(f"{Colors.SUCCESS}[30-MIN SCAN] Both strategy scans completed{Colors.RESET}")
             self.last_grok_analysis_time = now
 
         # Display portfolio overview after each scan to show position changes
