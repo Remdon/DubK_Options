@@ -4289,8 +4289,8 @@ Example: AAPL|EXIT|Stock momentum reversed, exit signal"""
             logging.info(f"[SPREAD]   Target Credit: ${credit:.2f} per spread")
             logging.info(f"[SPREAD]   Total Credit: ${credit * contracts:.2f}")
 
-            from alpaca.trading.requests import LimitOrderRequest
-            from alpaca.trading.enums import OrderSide, TimeInForce
+            from alpaca.trading.requests import LimitOrderRequest, OptionLegRequest
+            from alpaca.trading.enums import OrderSide, TimeInForce, OrderClass, PositionIntent
 
             # Use ACTUAL market prices from the spread dict (not estimates!)
             short_put_bid = spread.get('short_put_bid', credit * 0.6)
@@ -4307,44 +4307,50 @@ Example: AAPL|EXIT|Stock momentum reversed, exit signal"""
             logging.info(f"[SPREAD] Market prices - Short bid: ${short_put_bid:.2f}, Long ask: ${long_put_ask:.2f}")
             logging.info(f"[SPREAD] Order prices - Short limit: ${short_put_price:.2f} (95% of bid), Long limit: ${long_put_price:.2f} (105% of ask)")
 
-            # LEG 1: SELL the higher strike put (short leg - collect premium)
-            logging.info(f"[SPREAD] Placing SHORT put order: {short_put_symbol}")
-            short_order_request = LimitOrderRequest(
+            # CRITICAL FIX: Submit as multi-leg spread order (not two separate orders)
+            # This ensures Alpaca recognizes it as a spread and only requires max risk ($500)
+            # instead of naked short put margin ($14,864)
+            logging.info(f"[SPREAD] Placing multi-leg bull put spread order")
+
+            # Create legs for the spread
+            short_leg = OptionLegRequest(
                 symbol=short_put_symbol,
-                qty=contracts,
+                ratio_qty=contracts,
                 side=OrderSide.SELL,
-                time_in_force=TimeInForce.DAY,
-                limit_price=short_put_price
+                position_intent=PositionIntent.SELL_TO_OPEN
             )
 
-            short_order = self.spread_trading_client.submit_order(short_order_request)
-
-            if not short_order:
-                logging.error(f"[SPREAD] ❌ Failed to place short put order")
-                return False
-
-            logging.info(f"[SPREAD] ✓ Short put order placed - Order ID: {short_order.id}")
-            print(f"{Colors.SUCCESS}[SPREAD] ✓ Short put order placed - Order ID: {short_order.id}{Colors.RESET}")
-
-            # LEG 2: BUY the lower strike put (long leg - define max risk)
-            logging.info(f"[SPREAD] Placing LONG put order: {long_put_symbol}")
-            long_order_request = LimitOrderRequest(
+            long_leg = OptionLegRequest(
                 symbol=long_put_symbol,
-                qty=contracts,
+                ratio_qty=contracts,
                 side=OrderSide.BUY,
-                time_in_force=TimeInForce.DAY,
-                limit_price=long_put_price
+                position_intent=PositionIntent.BUY_TO_OPEN
             )
 
-            long_order = self.spread_trading_client.submit_order(long_order_request)
+            # Submit multi-leg spread order with net credit limit
+            net_credit_limit = round(short_put_price - long_put_price, 2)
 
-            if not long_order:
-                logging.error(f"[SPREAD] ❌ Failed to place long put order")
-                logging.warning(f"[SPREAD] ⚠️  Short put order is open - monitor position manually!")
+            spread_order_request = LimitOrderRequest(
+                symbol=symbol,  # Underlying symbol
+                qty=contracts,
+                side=OrderSide.BUY,  # For credit spread, use BUY side with negative limit price
+                time_in_force=TimeInForce.DAY,
+                order_class=OrderClass.MULTILEG,
+                limit_price=net_credit_limit,  # Net credit we want to receive
+                legs=[short_leg, long_leg]
+            )
+
+            logging.info(f"[SPREAD] Submitting spread order: {contracts} contracts @ ${net_credit_limit:.2f} net credit")
+            spread_order = self.spread_trading_client.submit_order(spread_order_request)
+
+            if not spread_order:
+                logging.error(f"[SPREAD] ❌ Failed to place spread order")
                 return False
 
-            logging.info(f"[SPREAD] ✓ Long put order placed - Order ID: {long_order.id}")
-            print(f"{Colors.SUCCESS}[SPREAD] ✓ Long put order placed - Order ID: {long_order.id}{Colors.RESET}")
+            logging.info(f"[SPREAD] ✓ Multi-leg spread order placed - Order ID: {spread_order.id}")
+            print(f"{Colors.SUCCESS}[SPREAD] ✓ Bull put spread order placed - Order ID: {spread_order.id}{Colors.RESET}")
+            print(f"{Colors.INFO}[SPREAD]   Legs: Sell {short_strike} put / Buy {long_strike} put{Colors.RESET}")
+            print(f"{Colors.INFO}[SPREAD]   Net Credit: ${net_credit_limit:.2f} per spread{Colors.RESET}")
 
             # Create database entry to track the spread
             spread_id = self.spread_manager.create_spread_position(
@@ -4359,15 +4365,14 @@ Example: AAPL|EXIT|Stock momentum reversed, exit signal"""
                 entry_dte=spread['dte'],
                 entry_delta=spread.get('probability_profit', 70) / 100,
                 notes=f"Auto-generated spread - {spread['annual_return']:.1f}% annual return. "
-                      f"Short order: {short_order.id}, Long order: {long_order.id}"
+                      f"Multi-leg order: {spread_order.id}"
             )
 
             logging.info(f"[SPREAD] ✓ Spread position #{spread_id} created in database")
             logging.info(f"[SPREAD] ═══════════════════════════════════════════════════")
             print(f"{Colors.SUCCESS}[SPREAD] ✓ {symbol}: Bull put spread executed successfully!{Colors.RESET}")
             print(f"{Colors.INFO}[SPREAD]   Spread ID: #{spread_id}{Colors.RESET}")
-            print(f"{Colors.INFO}[SPREAD]   Short Order: {short_order.id}{Colors.RESET}")
-            print(f"{Colors.INFO}[SPREAD]   Long Order: {long_order.id}{Colors.RESET}")
+            print(f"{Colors.INFO}[SPREAD]   Multi-leg Order: {spread_order.id}{Colors.RESET}")
 
             return True
 
