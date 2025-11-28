@@ -518,8 +518,9 @@ class OptionsBot:
                         print(f"{Colors.INFO}OPEN POSITIONS - BULL PUT SPREAD STRATEGY:{Colors.RESET}")
                         spread_total_value = 0
                         spread_total_pl = 0
+                        display_index = 0  # Track display index separately since we may skip spreads
 
-                        for i, spread in enumerate(spread_positions, 1):
+                        for spread in spread_positions:
                             symbol = spread['symbol']
                             short_strike = spread['short_strike']
                             long_strike = spread['long_strike']
@@ -536,6 +537,8 @@ class OptionsBot:
                                 # Get current positions from Alpaca
                                 alpaca_positions = self.spread_trading_client.get_all_positions()
 
+                                short_leg_found = False
+                                long_leg_found = False
                                 short_leg_pnl = 0
                                 long_leg_pnl = 0
                                 short_current_price = 0
@@ -544,11 +547,29 @@ class OptionsBot:
                                 # Find matching positions and get their P&L directly from Alpaca
                                 for pos in alpaca_positions:
                                     if pos.symbol == short_put_symbol:
+                                        short_leg_found = True
                                         short_leg_pnl = float(pos.unrealized_pl) if pos.unrealized_pl else 0
                                         short_current_price = float(pos.current_price) if pos.current_price else 0
                                     elif pos.symbol == long_put_symbol:
+                                        long_leg_found = True
                                         long_leg_pnl = float(pos.unrealized_pl) if pos.unrealized_pl else 0
                                         long_current_price = float(pos.current_price) if pos.current_price else 0
+
+                                # CRITICAL: If neither leg exists in Alpaca, spread was closed - skip display and close in DB
+                                if not short_leg_found and not long_leg_found:
+                                    logging.info(f"[SPREAD] {symbol}: Neither leg found in Alpaca - spread was closed, updating database")
+                                    # Exit price is 0 since both legs are gone (fully expired or closed)
+                                    self.spread_manager.close_spread_position(
+                                        spread_id=spread['id'],
+                                        exit_price=0.0,
+                                        exit_reason="Both legs closed (not found in Alpaca positions)"
+                                    )
+                                    continue  # Skip displaying this spread
+
+                                # If only one leg exists, log warning but still display (may be partial fill/close)
+                                if not short_leg_found or not long_leg_found:
+                                    missing_leg = "short" if not short_leg_found else "long"
+                                    logging.warning(f"[SPREAD] {symbol}: {missing_leg} leg not found in Alpaca - may be partial position")
 
                                 # Total spread P&L is sum of both legs (Alpaca already calculated correctly)
                                 unrealized_pnl = short_leg_pnl + long_leg_pnl
@@ -599,13 +620,16 @@ class OptionsBot:
                                 stock_pct_change = 0
                                 stock_change_color = Colors.DIM
 
+                            # Increment display index for this spread
+                            display_index += 1
+
                             # Color code P&L
                             pl_color = Colors.SUCCESS if unrealized_pnl >= 0 else Colors.ERROR
 
                             # Display format: "Symbol ExpDate SPREAD Qty: X  Strikes: $XX/$XX"
                             display_symbol = f"{symbol} {exp_display} SPREAD"
 
-                            print(f"{Colors.DIM}  {i:2d}. {display_symbol:25s} Qty: {num_contracts:3d}  Strikes: ${short_strike:.2f}/${long_strike:.2f}")
+                            print(f"{Colors.DIM}  {display_index:2d}. {display_symbol:25s} Qty: {num_contracts:3d}  Strikes: ${short_strike:.2f}/${long_strike:.2f}")
                             print(f"      Stock: ${stock_price:>7.2f} {stock_change_color}({stock_pct_change:>+6.2f}%){Colors.RESET}  DTE: {dte:3d}  {pl_color}P&L: ${unrealized_pnl:>+10,.2f} ({unrealized_pnl_pct/100:>+6.1%}){Colors.RESET}")
                             print(f"      Credit: ${total_credit:.2f}  Current: ${current_value:.2f}  Max Profit: ${max_profit:.0f}  Max Risk: ${max_risk:.0f}\n")
 
