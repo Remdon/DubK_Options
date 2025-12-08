@@ -4354,15 +4354,20 @@ Example: AAPL|EXIT|Stock momentum reversed, exit signal"""
             )
 
             # Submit multi-leg spread order with net credit limit
+            # CRITICAL FIX: For MLEG options orders in Alpaca, DO NOT pass 'symbol' field!
+            # The error "symbol is not allowed for mleg order" means:
+            # - MLEG orders derive the underlying from the option leg symbols
+            # - Passing 'symbol' explicitly causes rejection
+            # - The legs themselves contain the full OCC option symbols which include the underlying
             net_credit_limit = round(short_put_price - long_put_price, 2)
 
             spread_order_request = LimitOrderRequest(
-                symbol=symbol,  # Underlying symbol
-                qty=contracts,
-                side=OrderSide.BUY,  # For credit spread, use BUY side with negative limit price
+                # symbol=symbol,  # DO NOT PASS - causes "symbol is not allowed for mleg order"
+                qty=contracts,  # Number of spread contracts
+                side=OrderSide.SELL,  # SELL for credit spread
                 time_in_force=TimeInForce.DAY,
-                order_class=OrderClass.MLEG,  # Multi-leg order (not MULTILEG!)
-                limit_price=net_credit_limit,  # Net credit we want to receive
+                order_class=OrderClass.MLEG,  # Multi-leg order
+                limit_price=-net_credit_limit,  # NEGATIVE for credit (we receive money)
                 legs=[short_leg, long_leg]
             )
 
