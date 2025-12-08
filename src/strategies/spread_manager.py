@@ -10,6 +10,7 @@ Manages spread position lifecycle:
 
 import logging
 import sqlite3
+import threading
 from typing import List, Dict, Optional
 from datetime import datetime
 from enum import Enum
@@ -38,6 +39,7 @@ class SpreadManager:
         """Initialize spread manager with database connection"""
         self.db_path = db_path
         self.conn = sqlite3.connect(db_path, check_same_thread=False)
+        self.db_lock = threading.Lock()  # CRITICAL FIX: Thread-safe database access
         self.create_tables()
         logging.info(f"[SPREAD_MANAGER] Initialized with database: {db_path}")
 

@@ -372,15 +372,19 @@ class BullPutSpreadStrategy:
         # Log selected strikes for debugging
         logging.debug(f"[SPREAD] {symbol}: Selected strikes - Short: ${short_put['strike']:.2f}, Long: ${long_put['strike']:.2f}")
 
-        # CRITICAL: Validate that short and long strikes are different
-        if short_put['strike'] == long_put['strike']:
+        # CRITICAL FIX: Use tolerance for floating-point comparison
+        # Validates that strikes are different to avoid synthetic positions
+        strike_diff = abs(short_put['strike'] - long_put['strike'])
+        if strike_diff < 0.01:  # Less than 1 cent difference
             logging.error(f"[SPREAD] {symbol}: INVALID SPREAD - Both legs have same strike ${short_put['strike']:.2f}! "
+                        f"Strike difference ${strike_diff:.4f} < 0.01 tolerance. "
                         f"This would create a synthetic position, not a spread. "
                         f"Target long strike was ${long_strike_target:.2f} but no different strike available.")
             return None
 
         # Validate strikes are in correct order (short > long for bull put spread)
-        if short_put['strike'] <= long_put['strike']:
+        # Using tolerance to avoid floating-point errors
+        if short_put['strike'] <= long_put['strike'] + 0.01:  # Allow 1 cent tolerance
             logging.error(f"[SPREAD] {symbol}: INVALID SPREAD - Short strike ${short_put['strike']:.2f} "
                         f"not higher than long strike ${long_put['strike']:.2f}!")
             return None

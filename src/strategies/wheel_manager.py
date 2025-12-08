@@ -10,6 +10,7 @@ Manages wheel position lifecycle:
 
 import logging
 import sqlite3
+import threading
 from typing import List, Dict, Optional, Tuple
 from datetime import datetime
 from enum import Enum
@@ -37,6 +38,7 @@ class WheelManager:
         """Initialize wheel manager with database connection"""
         self.db_path = db_path
         self.conn = sqlite3.connect(db_path, check_same_thread=False)
+        self.db_lock = threading.Lock()  # CRITICAL FIX: Thread-safe database access
         self.create_tables()
         logging.info(f"[WHEEL_MANAGER] Initialized with database: {db_path}")
 
@@ -170,43 +172,44 @@ class WheelManager:
         Returns:
             wheel_position_id
         """
-        now = datetime.now().isoformat()
+        with self.db_lock:  # CRITICAL FIX: Thread-safe database write
+            now = datetime.now().isoformat()
 
-        cursor = self.conn.execute("""
-            INSERT INTO wheel_positions (
-                symbol, state, created_at, updated_at,
-                total_premium_collected, put_premium_collected,
-                current_option_symbol, current_strike, current_expiration,
-                current_premium, current_entry_date, notes
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """, (
-            symbol, WheelState.SELLING_PUTS.value, now, now,
-            initial_premium, initial_premium,
-            option_symbol, strike, expiration,
-            initial_premium, now, notes
-        ))
+            cursor = self.conn.execute("""
+                INSERT INTO wheel_positions (
+                    symbol, state, created_at, updated_at,
+                    total_premium_collected, put_premium_collected,
+                    current_option_symbol, current_strike, current_expiration,
+                    current_premium, current_entry_date, notes
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (
+                symbol, WheelState.SELLING_PUTS.value, now, now,
+                initial_premium, initial_premium,
+                option_symbol, strike, expiration,
+                initial_premium, now, notes
+            ))
 
-        wheel_id = cursor.lastrowid
+            wheel_id = cursor.lastrowid
 
-        # Log transaction
-        self._log_transaction(
-            wheel_id=wheel_id,
-            transaction_type='PUT_SOLD',
-            symbol=symbol,
-            option_symbol=option_symbol,
-            strike=strike,
-            expiration=expiration,
-            action='SELL_TO_OPEN',
-            quantity=1,
-            premium=initial_premium,
-            state_before=None,
-            state_after=WheelState.SELLING_PUTS.value,
-            notes=f"Initial put sale: ${initial_premium:.2f} premium collected"
-        )
+            # Log transaction
+            self._log_transaction(
+                wheel_id=wheel_id,
+                transaction_type='PUT_SOLD',
+                symbol=symbol,
+                option_symbol=option_symbol,
+                strike=strike,
+                expiration=expiration,
+                action='SELL_TO_OPEN',
+                quantity=1,
+                premium=initial_premium,
+                state_before=None,
+                state_after=WheelState.SELLING_PUTS.value,
+                notes=f"Initial put sale: ${initial_premium:.2f} premium collected"
+            )
 
-        self.conn.commit()
-        logging.info(f"[WHEEL_MANAGER] {symbol}: Created wheel position (ID: {wheel_id}) in SELLING_PUTS state")
-        return wheel_id
+            self.conn.commit()
+            logging.info(f"[WHEEL_MANAGER] {symbol}: Created wheel position (ID: {wheel_id}) in SELLING_PUTS state")
+            return wheel_id
 
     def mark_assigned(self, symbol: str, assignment_price: float, shares: int = 100) -> bool:
         """
@@ -220,45 +223,51 @@ class WheelManager:
         Returns:
             True if updated successfully
         """
-        position = self.get_wheel_position(symbol)
-        if not position:
-            logging.error(f"[WHEEL_MANAGER] {symbol}: No wheel position found to mark assigned")
-            return False
+        with self.db_lock:  # CRITICAL FIX: Thread-safe database write + idempotency
+            position = self.get_wheel_position(symbol)
+            if not position:
+                logging.error(f"[WHEEL_MANAGER] {symbol}: No wheel position found to mark assigned")
+                return False
 
-        if position['state'] != WheelState.SELLING_PUTS.value:
-            logging.warning(f"[WHEEL_MANAGER] {symbol}: Position in state {position['state']}, "
-                          f"expected SELLING_PUTS")
+            # CRITICAL FIX: Idempotency check - don't re-assign if already assigned
+            if position['state'] == WheelState.ASSIGNED.value:
+                logging.warning(f"[WHEEL_MANAGER] {symbol}: Already in ASSIGNED state, skipping duplicate assignment")
+                return True  # Not an error, just already processed
 
-        now = datetime.now().isoformat()
+            if position['state'] != WheelState.SELLING_PUTS.value:
+                logging.warning(f"[WHEEL_MANAGER] {symbol}: Position in state {position['state']}, "
+                              f"expected SELLING_PUTS")
 
-        self.conn.execute("""
-            UPDATE wheel_positions
-            SET state = ?,
-                stock_cost_basis = ?,
-                shares_owned = ?,
-                updated_at = ?,
-                current_option_symbol = NULL,
-                current_strike = NULL,
-                current_expiration = NULL
-            WHERE symbol = ?
-        """, (WheelState.ASSIGNED.value, assignment_price, shares, now, symbol))
+            now = datetime.now().isoformat()
 
-        # Log transaction
-        self._log_transaction(
-            wheel_id=position['id'],
-            transaction_type='ASSIGNMENT',
-            symbol=symbol,
-            action='ASSIGNED',
-            quantity=shares,
-            premium=0,
-            state_before=WheelState.SELLING_PUTS.value,
-            state_after=WheelState.ASSIGNED.value,
-            notes=f"Put assigned: acquired {shares} shares @ ${assignment_price:.2f}"
-        )
+            self.conn.execute("""
+                UPDATE wheel_positions
+                SET state = ?,
+                    stock_cost_basis = ?,
+                    shares_owned = ?,
+                    updated_at = ?,
+                    current_option_symbol = NULL,
+                    current_strike = NULL,
+                    current_expiration = NULL
+                WHERE symbol = ?
+            """, (WheelState.ASSIGNED.value, assignment_price, shares, now, symbol))
 
-        self.conn.commit()
-        logging.info(f"[WHEEL_MANAGER] {symbol}: Marked as ASSIGNED - {shares} shares @ ${assignment_price:.2f}")
-        return True
+            # Log transaction
+            self._log_transaction(
+                wheel_id=position['id'],
+                transaction_type='ASSIGNMENT',
+                symbol=symbol,
+                action='ASSIGNED',
+                quantity=shares,
+                premium=0,
+                state_before=WheelState.SELLING_PUTS.value,
+                state_after=WheelState.ASSIGNED.value,
+                notes=f"Put assigned: acquired {shares} shares @ ${assignment_price:.2f}"
+            )
+
+            self.conn.commit()
+            logging.info(f"[WHEEL_MANAGER] {symbol}: Marked as ASSIGNED - {shares} shares @ ${assignment_price:.2f}")
+            return True
 
     def mark_selling_calls(self, symbol: str, call_premium: float, option_symbol: str,
                           strike: float, expiration: str) -> bool:
@@ -857,10 +866,14 @@ class WheelManager:
                     # ASSIGNMENT DETECTED!
                     logging.info(f"[WHEEL ASSIGNMENT] {symbol} - Put was assigned, now own {shares_owned} shares")
 
-                    # Calculate cost basis: strike price - premium per share
+                    # CRITICAL FIX: Calculate cost basis correctly
+                    # put_premium is total premium for all contracts (e.g., $200 for 2 contracts)
+                    # shares_owned is total shares (e.g., 200 shares = 2 contracts)
+                    # Need to divide by 100 to get premium per share
                     strike = wheel_pos['current_strike']
                     put_premium = wheel_pos['put_premium_collected']
-                    premium_per_share = put_premium / shares_owned if shares_owned > 0 else 0
+                    num_contracts = shares_owned // 100 if shares_owned > 0 else 0
+                    premium_per_share = (put_premium / num_contracts) / 100 if num_contracts > 0 else 0
                     cost_basis = strike - premium_per_share
 
                     logging.info(f"[WHEEL ASSIGNMENT] {symbol} - Cost basis: ${cost_basis:.2f}/share " +

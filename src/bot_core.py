@@ -2654,13 +2654,22 @@ Example: AAPL|EXIT|Stock momentum reversed, exit signal"""
                     logging.info("[PARALLEL SCAN] Spread strategy scan started")
 
                 # Wait for both scans to complete and handle any errors
+                # CRITICAL FIX: Enhanced error handling with full traceback
+                scan_errors = []
                 for strategy_name, future in futures.items():
                     try:
                         future.result()  # This blocks until the scan completes
                         logging.info(f"[PARALLEL SCAN] {strategy_name.capitalize()} strategy scan completed successfully")
                     except Exception as e:
-                        logging.error(f"[PARALLEL SCAN] {strategy_name.capitalize()} strategy scan failed: {e}")
-                        print(f"{Colors.ERROR}[ERROR] {strategy_name.capitalize()} scan failed: {e}{Colors.RESET}")
+                        error_msg = f"{strategy_name.capitalize()} strategy scan failed: {e}"
+                        scan_errors.append(error_msg)
+                        logging.error(f"[PARALLEL SCAN] {error_msg}", exc_info=True)  # Include full traceback
+                        print(f"{Colors.ERROR}[ERROR] {error_msg}{Colors.RESET}")
+
+                # Alert if both scans failed
+                if len(scan_errors) == len(futures):
+                    logging.critical("[PARALLEL SCAN] CRITICAL: All strategy scans failed!")
+                    print(f"{Colors.ERROR}[CRITICAL] All strategy scans failed - check logs{Colors.RESET}")
 
             print(f"{Colors.SUCCESS}[30-MIN SCAN] Both strategy scans completed{Colors.RESET}")
             self.last_grok_analysis_time = now
