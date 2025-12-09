@@ -413,6 +413,12 @@ class SpreadManager:
                 short_puts = [p for p in positions if p['side'] == 'short']
                 long_puts = [p for p in positions if p['side'] == 'long']
 
+                # DEBUG: Log what we found
+                logging.info(f"[SPREAD_RECONCILE] {underlying} {expiration}: Found {len(short_puts)} short, {len(long_puts)} long")
+                if positions:
+                    for p in positions:
+                        logging.info(f"  - Strike ${p['strike']:.2f} Qty {p['qty']} ({p['side']})")
+
                 if len(short_puts) == 1 and len(long_puts) == 1:
                     spreads_found += 1
                     short = short_puts[0]
@@ -420,7 +426,7 @@ class SpreadManager:
 
                     # Validate it's a bull put spread (short strike > long strike)
                     if short['strike'] <= long['strike']:
-                        logging.warning(f"[SPREAD_RECONCILE] {underlying}: Invalid spread - short ${short['strike']} not > long ${long['strike']}")
+                        logging.warning(f"[SPREAD_RECONCILE] {underlying}: Invalid spread - short ${short['strike']:.2f} not > long ${long['strike']:.2f}")
                         continue
 
                     # Check if already in database
@@ -461,6 +467,12 @@ class SpreadManager:
 
                     spreads_imported += 1
                     logging.info(f"[SPREAD_RECONCILE] ✓ Imported {underlying} spread (ID: {spread_id})")
+                else:
+                    # Log why spread wasn't recognized
+                    if len(short_puts) == 0 and len(long_puts) == 0:
+                        logging.debug(f"[SPREAD_RECONCILE] {underlying} {expiration}: No positions found")
+                    elif len(short_puts) != 1 or len(long_puts) != 1:
+                        logging.warning(f"[SPREAD_RECONCILE] {underlying} {expiration}: Unexpected position count - {len(short_puts)} short, {len(long_puts)} long (need exactly 1 of each)")
 
             logging.info(f"[SPREAD_RECONCILE] Complete: Found {spreads_found} spreads, imported {spreads_imported} new")
             return spreads_imported
