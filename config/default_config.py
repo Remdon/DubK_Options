@@ -140,7 +140,7 @@ class Config:
 
         # Spread exit rules
         self.SPREAD_PROFIT_TARGET_PCT = float(os.getenv('SPREAD_PROFIT_TARGET_PCT', '0.50'))  # Close at 50% profit
-        self.SPREAD_STOP_LOSS_PCT = float(os.getenv('SPREAD_STOP_LOSS_PCT', '-1.00'))  # Stop at -100% (max loss)
+        self.SPREAD_STOP_LOSS_PCT = float(os.getenv('SPREAD_STOP_LOSS_PCT', '-0.75'))  # Stop at -75% (preserve capital)
 
         # =====================================================================
         # STRATEGY-SPECIFIC EXPIRATION EXITS

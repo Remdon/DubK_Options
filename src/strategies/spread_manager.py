@@ -340,6 +340,135 @@ class SpreadManager:
         """, (SpreadState.OPEN.value,))
         return cursor.fetchone()[0]
 
+    def reconcile_spreads_from_alpaca(self, trading_client) -> int:
+        """
+        Reconcile spread positions from Alpaca that aren't in database.
+
+        Scans Alpaca positions for option spreads and creates database entries
+        for any spreads not currently tracked.
+
+        Returns:
+            Number of spreads imported
+        """
+        import re
+        from collections import defaultdict
+
+        logging.info("[SPREAD_RECONCILE] Starting reconciliation with Alpaca positions...")
+
+        try:
+            # Get all positions from Alpaca
+            alpaca_positions = trading_client.get_all_positions()
+
+            # Parse option positions by underlying and expiration
+            # OCC format: SYMBOL(6)YYMMDD(C/P)STRIKE(8)
+            # Example: SOFI260102P00024000 = SOFI 2026-01-02 Put $24.00
+            option_positions = defaultdict(list)
+
+            for pos in alpaca_positions:
+                symbol = pos.symbol
+
+                # Check if it's an option (contains expiration date pattern)
+                # Options format: 6 chars symbol + 6 digit date + C/P + 8 digit strike
+                if len(symbol) >= 15:
+                    try:
+                        # Parse OCC symbol
+                        underlying = symbol[:symbol.index('2')]  # Everything before year starts with '2'
+                        date_start = symbol.index('2')
+                        expiration_str = symbol[date_start:date_start+6]  # YYMMDD
+                        option_type = symbol[date_start+6]  # C or P
+                        strike_str = symbol[date_start+7:date_start+15]  # 8 digits
+
+                        # Convert to readable format
+                        exp_year = '20' + expiration_str[0:2]
+                        exp_month = expiration_str[2:4]
+                        exp_day = expiration_str[4:6]
+                        expiration = f"{exp_year}-{exp_month}-{exp_day}"
+
+                        strike = float(strike_str) / 1000  # Strike in dollars
+
+                        qty = int(pos.qty) if pos.qty else 0
+
+                        # Group by underlying + expiration + type
+                        key = (underlying, expiration, option_type)
+                        option_positions[key].append({
+                            'symbol': symbol,
+                            'strike': strike,
+                            'qty': qty,
+                            'side': 'short' if qty < 0 else 'long'
+                        })
+
+                    except (ValueError, IndexError) as e:
+                        logging.debug(f"[SPREAD_RECONCILE] Could not parse symbol {symbol}: {e}")
+                        continue
+
+            # Identify spreads (short + long put with same underlying/expiration)
+            spreads_found = 0
+            spreads_imported = 0
+
+            for (underlying, expiration, option_type), positions in option_positions.items():
+                if option_type != 'P':  # Only looking for put spreads
+                    continue
+
+                # Need exactly 1 short and 1 long position for a spread
+                short_puts = [p for p in positions if p['side'] == 'short']
+                long_puts = [p for p in positions if p['side'] == 'long']
+
+                if len(short_puts) == 1 and len(long_puts) == 1:
+                    spreads_found += 1
+                    short = short_puts[0]
+                    long = long_puts[0]
+
+                    # Validate it's a bull put spread (short strike > long strike)
+                    if short['strike'] <= long['strike']:
+                        logging.warning(f"[SPREAD_RECONCILE] {underlying}: Invalid spread - short ${short['strike']} not > long ${long['strike']}")
+                        continue
+
+                    # Check if already in database
+                    cursor = self.conn.execute("""
+                        SELECT id FROM spread_positions
+                        WHERE symbol = ? AND expiration = ?
+                        AND short_strike = ? AND long_strike = ?
+                        AND state = ?
+                    """, (underlying, expiration, short['strike'], long['strike'], SpreadState.OPEN.value))
+
+                    if cursor.fetchone():
+                        logging.debug(f"[SPREAD_RECONCILE] {underlying}: Spread already in database")
+                        continue
+
+                    # Import spread to database
+                    num_contracts = abs(short['qty'])
+                    spread_width = short['strike'] - long['strike']
+
+                    # Estimate credit (we don't have historical data, use current value)
+                    # This is a best guess for reconciliation
+                    estimated_credit = spread_width * 0.20  # Assume 20% of width as credit
+
+                    logging.info(f"[SPREAD_RECONCILE] Importing {underlying} spread: ${short['strike']:.2f}/${long['strike']:.2f} exp {expiration}")
+
+                    with self.db_lock:
+                        spread_id = self.create_spread_position(
+                            symbol=underlying,
+                            short_strike=short['strike'],
+                            long_strike=long['strike'],
+                            short_put_symbol=short['symbol'],
+                            long_put_symbol=long['symbol'],
+                            num_contracts=num_contracts,
+                            credit_per_spread=estimated_credit,
+                            expiration=expiration,
+                            entry_dte=0,  # Unknown
+                            notes="Imported from Alpaca reconciliation"
+                        )
+
+                    spreads_imported += 1
+                    logging.info(f"[SPREAD_RECONCILE] ✓ Imported {underlying} spread (ID: {spread_id})")
+
+            logging.info(f"[SPREAD_RECONCILE] Complete: Found {spreads_found} spreads, imported {spreads_imported} new")
+            return spreads_imported
+
+        except Exception as e:
+            logging.error(f"[SPREAD_RECONCILE] Error during reconciliation: {e}", exc_info=True)
+            return 0
+
     def get_symbol_performance(self, symbol: str) -> Optional[Dict]:
         """Get performance stats for a symbol"""
         cursor = self.conn.execute("""
