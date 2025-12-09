@@ -2,7 +2,7 @@
 
 ## Overview
 Comprehensive code review identified 25 issues (6 CRITICAL, 5 HIGH, 9 MEDIUM, 5 LOW).
-**7 CRITICAL and HIGH issues fixed and committed to GitHub.**
+**9 CRITICAL and HIGH issues fixed and committed to GitHub.**
 
 ---
 
@@ -122,26 +122,56 @@ spread_order_request = LimitOrderRequest(
 
 **Impact:** Spread orders now execute successfully, proper margin recognition
 
+### 8. SPREAD POSITION RECONCILIATION (HIGH) ✅ FIXED
+**Issue:** Bot showed 1 spread (SOFI) but Alpaca had 4 positions (BE, INTC, SMR, SOFI)
+
+**Root Cause:** Database didn't auto-import existing Alpaca positions on startup
+
+**Fix:**
+```python
+# spread_manager.py:343-470
+def reconcile_spreads_from_alpaca(self, trading_client):
+    # Parse OCC symbols: SYMBOL(6)YYMMDD(C/P)STRIKE(8)
+    # Group by underlying + expiration
+    # Identify bull put spreads (1 short + 1 long)
+    # Import missing spreads to database
+```
+
+**Called on startup:**
+```python
+# bot_core.py:280-284
+imported = self.spread_manager.reconcile_spreads_from_alpaca(self.spread_trading_client)
+```
+
+**Impact:** All 4 Alpaca spreads now tracked in database
+
+---
+
+### 9. SPREAD STOP LOSS (HIGH) ✅ FIXED
+**Issue:** No stop loss on spreads - Boeing at -$980 loss with no exit
+
+**Root Cause:** Config set to -100% stop (max loss), no enforcement
+
+**Fix:**
+```python
+# bot_core.py:4737-4749
+stop_loss_pct = -0.75  # Stop at -75% of max profit
+if pnl_pct <= stop_loss_pct:
+    self._close_spread_position(position, "STOP_LOSS")
+```
+
+```python
+# default_config.py:143
+self.SPREAD_STOP_LOSS_PCT = -0.75  # Was -1.00
+```
+
+**Impact:** Preserves capital, closes Boeing spread on next monitor cycle
+
 ---
 
 ## ⚠️ REMAINING ISSUES TO FIX
 
-### 1. Spread Position Reconciliation (HIGH PRIORITY)
-**Problem:** Bot shows 1 spread (SOFI) but Alpaca has 4 positions
-
-**Root Cause:** Database doesn't auto-import existing Alpaca positions
-
-**Solution Needed:**
-- Add `reconcile_spreads_from_alpaca()` function to spread_manager.py
-- Detect spread positions in Alpaca not in database
-- Parse OCC symbols to identify spread legs
-- Auto-create database entries for missing spreads
-
-**Code Location:** `spread_manager.py` - add after `get_position_count()`
-
----
-
-### 2. Multi-leg Exit Fallback (MEDIUM)
+### 1. Multi-leg Exit Fallback (MEDIUM)
 **Problem:** `close_spread()` fails if one leg already closed
 
 **Solution:** Implement fallback to close remaining legs individually
@@ -153,16 +183,16 @@ spread_order_request = LimitOrderRequest(
 | Severity | Count | Fixed |
 |----------|-------|-------|
 | Critical | 6     | 5     |
-| High     | 5     | 2     |
+| High     | 5     | 4     |
 | Medium   | 9     | 0     |
 | Low      | 5     | 0     |
-| **Total**| **25**| **7** |
+| **Total**| **25**| **9** |
 
 ---
 
 ## 🚀 DEPLOYMENT STATUS
 
-**Git Commit:** f246c00
+**Git Commit:** 81f5491
 **Branch:** main
 **Pushed:** ✅ Yes
 **Repository:** https://github.com/Remdon/DubK_Options
@@ -171,9 +201,10 @@ spread_order_request = LimitOrderRequest(
 
 ## 📝 NEXT STEPS
 
-1. **HIGH PRIORITY:** Implement spread reconciliation from Alpaca
-2. **MEDIUM:** Add multi-leg exit fallback for incomplete closures
-3. **LOW:** Address code quality issues (magic numbers, docstrings, etc.)
+1. **MEDIUM:** Add multi-leg exit fallback for incomplete closures
+2. **LOW:** Address code quality issues (magic numbers, docstrings, etc.)
+3. **TEST:** Verify Boeing spread closes on next monitor cycle
+4. **TEST:** Confirm all 4 spreads appear in bot after restart
 
 ---
 
