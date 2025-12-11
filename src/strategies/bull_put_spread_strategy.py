@@ -312,7 +312,6 @@ class BullPutSpreadStrategy:
             # CRITICAL: Check earnings date (avoid IV crush)
             # Spreads are killed by earnings - IV drops and spreads get tested
             try:
-                from datetime import datetime, timedelta
                 earnings_calendar = self.scanner.earnings_calendar if hasattr(self.scanner, 'earnings_calendar') else {}
                 earnings_info = earnings_calendar.get(symbol)
 
