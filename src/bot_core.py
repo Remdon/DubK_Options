@@ -4260,7 +4260,12 @@ Example: AAPL|EXIT|Stock momentum reversed, exit signal"""
                 print(f"  Short ${candidate['short_strike']:.2f} / Long ${candidate['long_strike']:.2f}")
                 print(f"  Credit: ${candidate['credit']:.2f}, Max Risk: ${candidate['max_risk']:.0f}, ROI: {candidate['roi']:.1f}%")
 
-                # NEW: Check sector diversification limits
+                # Check consecutive losses (prevent revenge trading)
+                if not self.spread_strategy.check_consecutive_losses(symbol, self.spread_manager):
+                    print(f"{Colors.WARNING}[SPREAD] {symbol}: Too many consecutive losses, pausing entries{Colors.RESET}\n")
+                    continue  # Try next candidate
+
+                # Check sector diversification limits
                 if not self.spread_strategy.can_add_symbol_by_sector(symbol, self.spread_manager):
                     print(f"{Colors.WARNING}[SPREAD] {symbol}: Sector limit reached, skipping to maintain diversification{Colors.RESET}\n")
                     continue  # Try next candidate

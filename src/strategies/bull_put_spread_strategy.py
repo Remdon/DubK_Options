@@ -82,11 +82,36 @@ class BullPutSpreadStrategy:
         self.MAX_DTE = config.SPREAD_MAX_DTE  # 60 days
 
         # Exit parameters
-        self.PROFIT_TARGET_PCT = config.SPREAD_PROFIT_TARGET_PCT  # 50% profit
-        self.STOP_LOSS_PCT = config.SPREAD_STOP_LOSS_PCT  # -100% (let spread max out)
+        self.PROFIT_TARGET_PCT = config.SPREAD_PROFIT_TARGET_PCT  # 50% profit target
+        self.STOP_LOSS_PCT = config.SPREAD_STOP_LOSS_PCT  # -50% stop loss (preserve capital)
 
         logging.info(f"[SPREAD] Initialized with criteria: ${self.MIN_STOCK_PRICE}-${self.MAX_STOCK_PRICE}, "
                     f"IV rank {self.MIN_IV_RANK}%+, Spread width ${self.SPREAD_WIDTH}")
+
+    def check_consecutive_losses(self, symbol: str, spread_manager) -> bool:
+        """
+        Check if symbol has too many consecutive losses.
+
+        Prevents revenge trading on spreads - pauses after 2 consecutive losses.
+
+        Args:
+            symbol: Symbol to check
+            spread_manager: SpreadManager instance
+
+        Returns:
+            True if OK to trade, False if should pause
+        """
+        performance = spread_manager.get_symbol_performance(symbol)
+
+        if performance:
+            consecutive_losses = performance.get('consecutive_losses', 0)
+
+            if consecutive_losses >= 2:  # Max 2 consecutive losses
+                logging.warning(f"[SPREAD] {symbol}: {consecutive_losses} consecutive losses - "
+                              f"PAUSING new entries until streak breaks")
+                return False
+
+        return True
 
     def find_spread_candidates(self, max_candidates: int = 10) -> List[Dict]:
         """
@@ -250,12 +275,14 @@ class BullPutSpreadStrategy:
 
         NOTE: Spreads need HIGHER IV than Wheel strategy
         - Wheel looks for LOW IV (0-30% rank) - buy low volatility
-        - Spreads look for ELEVATED IV (20%+ rank) - sell premium when elevated
+        - Spreads look for ELEVATED IV (30%+ rank) - sell premium when elevated
 
         This means spreads may find ZERO candidates when market is calm (VIX <15)
+
+        NEW: Also screens for earnings risk (14 days minimum to avoid IV crush)
         """
         filtered = []
-        rejection_reasons = {'price': 0, 'iv_rank': 0, 'market_cap': 0}
+        rejection_reasons = {'price': 0, 'iv_rank': 0, 'market_cap': 0, 'earnings': 0}
         rejected_details = []
 
         for stock in stocks:
@@ -282,6 +309,37 @@ class BullPutSpreadStrategy:
                 rejected_details.append(f"{symbol}: market cap ${market_cap/1e9:.2f}B (need >=${self.MIN_MARKET_CAP/1e9:.1f}B)")
                 continue
 
+            # CRITICAL: Check earnings date (avoid IV crush)
+            # Spreads are killed by earnings - IV drops and spreads get tested
+            try:
+                from datetime import datetime, timedelta
+                earnings_calendar = self.scanner.earnings_calendar if hasattr(self.scanner, 'earnings_calendar') else {}
+                earnings_info = earnings_calendar.get(symbol)
+
+                if earnings_info and earnings_info.get('days_until'):
+                    days_until_earnings = earnings_info['days_until']
+
+                    # Reject if earnings within 14 days (prevent IV crush)
+                    if 0 < days_until_earnings < 14:
+                        rejection_reasons['earnings'] += 1
+                        rejected_details.append(f"{symbol}: earnings in {days_until_earnings} days (need >=14 days)")
+                        logging.warning(f"[SPREAD FILTER] ✗ {symbol}: Earnings in {days_until_earnings} days - SKIPPING to avoid IV crush")
+                        continue
+            except Exception as e:
+                logging.debug(f"[SPREAD] Could not check earnings for {symbol}: {e}")
+                # Don't reject on error - continue without earnings check
+
+            # Check for strong bearish bias (bull put spreads need neutral-to-bullish)
+            # This is a soft filter - we log warnings but don't reject entirely
+            # (spread can still work even in mild downtrend if properly OTM)
+            try:
+                if 'technical_bias' in stock:
+                    bias = stock.get('technical_bias', '').lower()
+                    if 'strong bear' in bias or 'very bearish' in bias:
+                        logging.warning(f"[SPREAD FILTER] ⚠ {symbol}: Strong bearish bias detected - spread may be risky")
+            except Exception as e:
+                logging.debug(f"[SPREAD] Could not check technical bias for {symbol}: {e}")
+
             filtered.append(stock)
             logging.info(f"[SPREAD FILTER] ✓ {symbol}: price ${price:.2f}, IV {iv_rank:.1f}%, cap ${market_cap/1e9:.2f}B")
 
@@ -290,7 +348,8 @@ class BullPutSpreadStrategy:
             logging.warning(f"[SPREAD] ❌ No stocks passed filters out of {len(stocks)} candidates")
             logging.warning(f"[SPREAD] Rejections: price={rejection_reasons['price']}, "
                           f"iv_rank={rejection_reasons['iv_rank']} (need >={self.MIN_IV_RANK}%), "
-                          f"market_cap={rejection_reasons['market_cap']}")
+                          f"market_cap={rejection_reasons['market_cap']}, "
+                          f"earnings={rejection_reasons['earnings']} (need >=14 days)")
             # Log first 5 rejection details for debugging
             for detail in rejected_details[:5]:
                 logging.warning(f"[SPREAD]   - {detail}")
