@@ -119,15 +119,15 @@ class Config:
         self.SPREAD_MAX_STOCK_PRICE = float(os.getenv('SPREAD_MAX_STOCK_PRICE', '300.00'))  # Can trade higher prices (defined risk)
         self.SPREAD_MIN_MARKET_CAP = float(os.getenv('SPREAD_MIN_MARKET_CAP', '2000000000'))  # $2B minimum
 
-        # Spread IV requirements (relaxed for current low-volatility environment)
-        self.SPREAD_MIN_IV_RANK = float(os.getenv('SPREAD_MIN_IV_RANK', '20'))  # Accept lower IV in calm markets
+        # Spread IV requirements (TIGHTENED - Strategy showing 50% win rate with -$1,315 loss)
+        self.SPREAD_MIN_IV_RANK = float(os.getenv('SPREAD_MIN_IV_RANK', '30'))  # Require higher IV for better premium (was 20)
         self.SPREAD_MAX_IV_RANK = float(os.getenv('SPREAD_MAX_IV_RANK', '100'))  # Can sell at any high IV
 
         # Spread construction parameters
         self.SPREAD_WIDTH = float(os.getenv('SPREAD_WIDTH', '5.00'))  # $5 wide spreads (standard)
-        self.SPREAD_MIN_CREDIT = float(os.getenv('SPREAD_MIN_CREDIT', '0.15'))  # Minimum $0.15 credit (realistic for $5 spreads)
+        self.SPREAD_MIN_CREDIT = float(os.getenv('SPREAD_MIN_CREDIT', '0.25'))  # Increased from $0.15 - need better risk/reward
         self.SPREAD_MAX_CAPITAL_PER_SPREAD = float(os.getenv('SPREAD_MAX_CAPITAL_PER_SPREAD', '500'))  # Max $500 risk per spread
-        self.SPREAD_SHORT_STRIKE_DELTA = float(os.getenv('SPREAD_SHORT_STRIKE_DELTA', '-0.30'))  # -0.25 to -0.35 (25-35% OTM)
+        self.SPREAD_SHORT_STRIKE_DELTA = float(os.getenv('SPREAD_SHORT_STRIKE_DELTA', '-0.35'))  # More OTM (was -0.30) for safety
 
         # Spread position limits
         self.MAX_SPREAD_POSITIONS = int(os.getenv('MAX_SPREAD_POSITIONS', '15'))  # Max 15 spreads
@@ -138,9 +138,9 @@ class Config:
         self.SPREAD_MIN_DTE = int(os.getenv('SPREAD_MIN_DTE', '21'))  # Minimum 21 days
         self.SPREAD_MAX_DTE = int(os.getenv('SPREAD_MAX_DTE', '60'))  # Maximum 60 days
 
-        # Spread exit rules
+        # Spread exit rules (ADJUSTED - Tighter stop loss to preserve capital)
         self.SPREAD_PROFIT_TARGET_PCT = float(os.getenv('SPREAD_PROFIT_TARGET_PCT', '0.50'))  # Close at 50% profit
-        self.SPREAD_STOP_LOSS_PCT = float(os.getenv('SPREAD_STOP_LOSS_PCT', '-0.75'))  # Stop at -75% (preserve capital)
+        self.SPREAD_STOP_LOSS_PCT = float(os.getenv('SPREAD_STOP_LOSS_PCT', '-0.50'))  # Tighter stop at -50% (was -75%)
 
         # =====================================================================
         # STRATEGY-SPECIFIC EXPIRATION EXITS
