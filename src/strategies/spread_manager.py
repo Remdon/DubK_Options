@@ -419,60 +419,78 @@ class SpreadManager:
                     for p in positions:
                         logging.info(f"  - Strike ${p['strike']:.2f} Qty {p['qty']} ({p['side']})")
 
-                if len(short_puts) == 1 and len(long_puts) == 1:
-                    spreads_found += 1
-                    short = short_puts[0]
-                    long = long_puts[0]
+                # Handle standard 1-to-1 spreads OR multiple spreads with overlapping legs
+                if len(short_puts) >= 1 and len(long_puts) >= 1:
+                    # Try to match shorts with longs to form valid spreads
+                    # For each short, find the nearest long put below it
+                    matched_spreads = []
 
-                    # Validate it's a bull put spread (short strike > long strike)
-                    if short['strike'] <= long['strike']:
-                        logging.warning(f"[SPREAD_RECONCILE] {underlying}: Invalid spread - short ${short['strike']:.2f} not > long ${long['strike']:.2f}")
+                    for short in short_puts:
+                        # Find long puts with strikes below this short
+                        valid_longs = [l for l in long_puts if l['strike'] < short['strike']]
+
+                        if valid_longs:
+                            # Choose the long with strike closest to short (tightest spread)
+                            best_long = max(valid_longs, key=lambda l: l['strike'])
+                            matched_spreads.append((short, best_long))
+
+                    if not matched_spreads:
+                        logging.warning(f"[SPREAD_RECONCILE] {underlying} {expiration}: Found {len(short_puts)} short, {len(long_puts)} long, but could not match any valid spreads")
                         continue
 
-                    # Check if already in database
-                    cursor = self.conn.execute("""
-                        SELECT id FROM spread_positions
-                        WHERE symbol = ? AND expiration = ?
-                        AND short_strike = ? AND long_strike = ?
-                        AND state = ?
-                    """, (underlying, expiration, short['strike'], long['strike'], SpreadState.OPEN.value))
+                    # Import each matched spread
+                    for short, long in matched_spreads:
+                        spreads_found += 1
 
-                    if cursor.fetchone():
-                        logging.debug(f"[SPREAD_RECONCILE] {underlying}: Spread already in database")
-                        continue
+                        # Validate it's a bull put spread (short strike > long strike)
+                        if short['strike'] <= long['strike']:
+                            logging.warning(f"[SPREAD_RECONCILE] {underlying}: Invalid spread - short ${short['strike']:.2f} not > long ${long['strike']:.2f}")
+                            continue
 
-                    # Import spread to database
-                    num_contracts = abs(short['qty'])
-                    spread_width = short['strike'] - long['strike']
+                        # Check if already in database
+                        cursor = self.conn.execute("""
+                            SELECT id FROM spread_positions
+                            WHERE symbol = ? AND expiration = ?
+                            AND short_strike = ? AND long_strike = ?
+                            AND state = ?
+                        """, (underlying, expiration, short['strike'], long['strike'], SpreadState.OPEN.value))
 
-                    # Estimate credit (we don't have historical data, use current value)
-                    # This is a best guess for reconciliation
-                    estimated_credit = spread_width * 0.20  # Assume 20% of width as credit
+                        if cursor.fetchone():
+                            logging.debug(f"[SPREAD_RECONCILE] {underlying}: Spread ${short['strike']:.2f}/${long['strike']:.2f} already in database")
+                            continue
 
-                    logging.info(f"[SPREAD_RECONCILE] Importing {underlying} spread: ${short['strike']:.2f}/${long['strike']:.2f} exp {expiration}")
+                        # Import spread to database
+                        num_contracts = abs(short['qty'])
+                        spread_width = short['strike'] - long['strike']
 
-                    with self.db_lock:
-                        spread_id = self.create_spread_position(
-                            symbol=underlying,
-                            short_strike=short['strike'],
-                            long_strike=long['strike'],
-                            short_put_symbol=short['symbol'],
-                            long_put_symbol=long['symbol'],
-                            num_contracts=num_contracts,
-                            credit_per_spread=estimated_credit,
-                            expiration=expiration,
-                            entry_dte=0,  # Unknown
-                            notes="Imported from Alpaca reconciliation"
-                        )
+                        # Estimate credit (we don't have historical data, use current value)
+                        # This is a best guess for reconciliation
+                        estimated_credit = spread_width * 0.20  # Assume 20% of width as credit
 
-                    spreads_imported += 1
-                    logging.info(f"[SPREAD_RECONCILE] ✓ Imported {underlying} spread (ID: {spread_id})")
+                        logging.info(f"[SPREAD_RECONCILE] Importing {underlying} spread: ${short['strike']:.2f}/${long['strike']:.2f} exp {expiration}")
+
+                        with self.db_lock:
+                            spread_id = self.create_spread_position(
+                                symbol=underlying,
+                                short_strike=short['strike'],
+                                long_strike=long['strike'],
+                                short_put_symbol=short['symbol'],
+                                long_put_symbol=long['symbol'],
+                                num_contracts=num_contracts,
+                                credit_per_spread=estimated_credit,
+                                expiration=expiration,
+                                entry_dte=0,  # Unknown
+                                notes="Imported from Alpaca reconciliation"
+                            )
+
+                        spreads_imported += 1
+                        logging.info(f"[SPREAD_RECONCILE] ✓ Imported {underlying} spread (ID: {spread_id})")
                 else:
                     # Log why spread wasn't recognized
                     if len(short_puts) == 0 and len(long_puts) == 0:
                         logging.debug(f"[SPREAD_RECONCILE] {underlying} {expiration}: No positions found")
-                    elif len(short_puts) != 1 or len(long_puts) != 1:
-                        logging.warning(f"[SPREAD_RECONCILE] {underlying} {expiration}: Unexpected position count - {len(short_puts)} short, {len(long_puts)} long (need exactly 1 of each)")
+                    else:
+                        logging.warning(f"[SPREAD_RECONCILE] {underlying} {expiration}: Could not form valid spreads from {len(short_puts)} short, {len(long_puts)} long puts")
 
             logging.info(f"[SPREAD_RECONCILE] Complete: Found {spreads_found} spreads, imported {spreads_imported} new")
             return spreads_imported

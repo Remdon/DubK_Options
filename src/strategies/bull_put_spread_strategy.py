@@ -312,18 +312,19 @@ class BullPutSpreadStrategy:
             # CRITICAL: Check earnings date (avoid IV crush)
             # Spreads are killed by earnings - IV drops and spreads get tested
             try:
-                earnings_calendar = self.scanner.earnings_calendar if hasattr(self.scanner, 'earnings_calendar') else {}
-                earnings_info = earnings_calendar.get(symbol)
-
-                if earnings_info and earnings_info.get('days_until'):
-                    days_until_earnings = earnings_info['days_until']
+                if hasattr(self.scanner, 'earnings_calendar') and self.scanner.earnings_calendar:
+                    earnings_risk = self.scanner.earnings_calendar.check_earnings_risk(symbol)
 
                     # Reject if earnings within 14 days (prevent IV crush)
-                    if 0 < days_until_earnings < 14:
-                        rejection_reasons['earnings'] += 1
-                        rejected_details.append(f"{symbol}: earnings in {days_until_earnings} days (need >=14 days)")
-                        logging.warning(f"[SPREAD FILTER] ✗ {symbol}: Earnings in {days_until_earnings} days - SKIPPING to avoid IV crush")
-                        continue
+                    # earnings_risk returns: {'risk': 'HIGH/MODERATE/LOW', 'days_until': X, 'action': 'AVOID/CAUTION/PROCEED'}
+                    if earnings_risk.get('days_until') is not None:
+                        days_until = earnings_risk['days_until']
+
+                        if 0 < days_until < 14:
+                            rejection_reasons['earnings'] += 1
+                            rejected_details.append(f"{symbol}: earnings in {days_until} days (need >=14 days)")
+                            logging.warning(f"[SPREAD FILTER] ✗ {symbol}: Earnings in {days_until} days - SKIPPING to avoid IV crush")
+                            continue
             except Exception as e:
                 logging.debug(f"[SPREAD] Could not check earnings for {symbol}: {e}")
                 # Don't reject on error - continue without earnings check
@@ -713,10 +714,12 @@ class BullPutSpreadStrategy:
             Current VIX value, or 15.0 as fallback if fetch fails
         """
         try:
+            # Try primary source: OpenBB quote for VIX
             vix_data = self.openbb_client.get_quote('VIX')
 
             if not vix_data or 'results' not in vix_data:
-                logging.warning(f"[SPREAD] No VIX data returned, using fallback 15.0")
+                logging.debug(f"[SPREAD] VIX data response: {vix_data}")
+                logging.warning(f"[SPREAD] No VIX data in expected format, using fallback 15.0")
                 return 15.0
 
             results = vix_data['results']
@@ -728,14 +731,19 @@ class BullPutSpreadStrategy:
                 vix_price = results.get('last_price') or results.get('close') or results.get('price')
             else:
                 vix_price = None
+                logging.debug(f"[SPREAD] VIX results format unexpected: {type(results)}, {results}")
 
             if vix_price and vix_price > 0:
                 logging.debug(f"[SPREAD] VIX fetched: {vix_price:.2f}")
                 return float(vix_price)
             else:
-                logging.warning(f"[SPREAD] Invalid VIX data, using fallback 15.0")
+                # Log the actual data structure to help debug
+                logging.warning(f"[SPREAD] Could not extract VIX price from data structure")
+                logging.debug(f"[SPREAD] VIX data keys: {vix_data.keys() if isinstance(vix_data, dict) else 'not a dict'}")
+                logging.debug(f"[SPREAD] VIX results sample: {str(results)[:200]}")
                 return 15.0
 
         except Exception as e:
             logging.warning(f"[SPREAD] Error fetching VIX (using fallback 15.0): {e}")
+            logging.debug(f"[SPREAD] VIX fetch exception details", exc_info=True)
             return 15.0
