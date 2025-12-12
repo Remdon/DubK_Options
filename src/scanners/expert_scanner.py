@@ -293,9 +293,13 @@ class ExpertMarketScanner:
                     symbol_clusters[symbol]['bearish_count'] += 1
                 symbol_clusters[symbol]['trades'].append(trade)
 
-            # Find high-conviction clusters (2+ trades, aligned sentiment)
+            # Find high-conviction clusters
+            # If data came from Grok (hallucinated), accept single trades since Grok provides curated list
+            # If data came from real API, require 2+ trades for confirmation
+            min_trades_required = 1 if 'data' in locals() and isinstance(data, list) and len(data) <= 10 else 2
+
             for symbol, cluster in symbol_clusters.items():
-                if cluster['count'] >= 2:  # Multiple trades
+                if cluster['count'] >= min_trades_required:
                     # Check sentiment alignment
                     total = cluster['count']
                     bullish_pct = cluster['bullish_count'] / total

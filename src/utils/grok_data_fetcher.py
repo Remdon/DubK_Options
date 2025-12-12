@@ -94,16 +94,13 @@ class GrokDataFetcher:
 
         logging.info("[GROK] Fetching unusual options activity from free sources...")
 
-        prompt = f"""Based on your knowledge of the stock market and current trading patterns, identify the most likely stocks that are experiencing unusual options activity TODAY.
+        prompt = f"""I need help identifying stocks with potential unusual options activity for options trading analysis.
 
-Look for stocks with:
-- High implied volatility (IV > 40%)
-- Recent news or catalyst events
-- Momentum or sector rotation
-- Large institutional interest
-- Earnings approaching or recently announced
+IMPORTANT: You do NOT have access to real-time market data. If you cannot provide factual information about TODAY's unusual options activity, return empty results.
 
-Return ONLY valid JSON with your analysis (5-10 symbols maximum):
+If you have general knowledge about stocks that TYPICALLY see high options volume (like NVDA, TSLA, AAPL, AMD, SPY, QQQ), you may suggest them, but mark them clearly as "estimated" not real-time data.
+
+Return ONLY valid JSON:
 
 {{
   "results": [
@@ -113,18 +110,18 @@ Return ONLY valid JSON with your analysis (5-10 symbols maximum):
       "volume": 10000,
       "open_interest": 5000,
       "sentiment": "BULLISH",
-      "trade_type": "sweep"
+      "trade_type": "estimated",
+      "note": "High-volume stock typically active in options"
     }}
   ]
 }}
 
 Requirements:
-- Focus on liquid, high-volume stocks (market cap > $2B)
-- Estimate premium based on typical unusual options activity (> ${min_premium:,})
-- sentiment: "BULLISH" for calls, "BEARISH" for puts
-- trade_type: "sweep" for aggressive orders, "block" for large single orders
-- Return empty results [] if you cannot identify any unusual activity
-- ONLY return the JSON structure, no markdown or explanations"""
+- If you don't have real data, return empty results: {{"results": []}}
+- Only suggest stocks you're confident typically have active options markets
+- Mark trade_type as "estimated" to indicate this is not real-time data
+- Focus on liquid mega-caps (NVDA, TSLA, AMD, AAPL, MSFT, SPY, QQQ)
+- ONLY return JSON, no explanations"""
 
         try:
             logging.warning("[GROK] Calling Grok API for unusual options...")  # Changed to WARNING to ensure visibility
