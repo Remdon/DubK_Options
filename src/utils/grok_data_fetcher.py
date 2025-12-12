@@ -94,34 +94,49 @@ class GrokDataFetcher:
 
         logging.info("[GROK] Fetching unusual options activity from free sources...")
 
-        prompt = f"""I need help identifying stocks with potential unusual options activity for options trading analysis.
+        today = datetime.now().strftime('%Y-%m-%d')
 
-IMPORTANT: You do NOT have access to real-time market data. If you cannot provide factual information about TODAY's unusual options activity, return empty results.
+        prompt = f"""Search the web and X (Twitter) for unusual options activity TODAY ({today}).
 
-If you have general knowledge about stocks that TYPICALLY see high options volume (like NVDA, TSLA, AAPL, AMD, SPY, QQQ), you may suggest them, but mark them clearly as "estimated" not real-time data.
+TASK: Find stocks with unusually high options volume, large premium trades, or unusual call/put activity being discussed by options traders.
 
-Return ONLY valid JSON:
+SOURCES TO CHECK:
+1. X/Twitter: Search for posts about "unusual options activity", "big options flow", "whale trades"
+2. Barchart.com - Unusual Options Activity page
+3. MarketBeat - Unusual Options Volume
+4. Finviz - Options screener
+5. Any other free sources discussing unusual options flow
+
+WHAT TO LOOK FOR:
+- Stocks with options volume significantly above average
+- Large premium trades (>$100K)
+- Unusual call or put buying
+- Mentions by credible options traders on X
+- High volume relative to open interest
+
+Return ONLY valid JSON with REAL data you found (not guesses):
 
 {{
   "results": [
     {{
-      "symbol": "NVDA",
-      "total_premium": 2000000,
-      "volume": 10000,
-      "open_interest": 5000,
+      "symbol": "AAPL",
+      "total_premium": 2500000,
+      "volume": 15000,
+      "open_interest": 8000,
       "sentiment": "BULLISH",
-      "trade_type": "estimated",
-      "note": "High-volume stock typically active in options"
+      "trade_type": "CALL",
+      "note": "Source: Barchart - Unusual call volume 3x average"
     }}
   ]
 }}
 
-Requirements:
-- If you don't have real data, return empty results: {{"results": []}}
-- Only suggest stocks you're confident typically have active options markets
-- Mark trade_type as "estimated" to indicate this is not real-time data
-- Focus on liquid mega-caps (NVDA, TSLA, AMD, AAPL, MSFT, SPY, QQQ)
-- ONLY return JSON, no explanations"""
+CRITICAL RULES:
+- Only include stocks you found mentioned in actual sources (web/X search results)
+- Include the source in the "note" field (e.g., "Source: Barchart", "Source: @trader on X")
+- If you can't find any unusual activity data, return: {{"results": []}}
+- DO NOT make up or estimate data - only real findings from your web search
+- Minimum premium threshold: ${min_premium:,}
+- ONLY return the JSON structure, no markdown or explanations"""
 
         try:
             logging.warning("[GROK] Calling Grok API for unusual options...")  # Changed to WARNING to ensure visibility
@@ -171,15 +186,23 @@ Requirements:
         today = datetime.now().strftime('%Y-%m-%d')
         end_date = (datetime.now() + timedelta(days=upcoming_days)).strftime('%Y-%m-%d')
 
-        prompt = f"""Based on your knowledge of earnings calendars, identify major companies (market cap > $2B) that are likely reporting earnings from {today} to {end_date}.
+        prompt = f"""Search the web for earnings calendar data from {today} to {end_date}.
 
-Focus on:
-- Large cap tech companies (FAANG, mega-cap tech)
-- Major financial institutions
-- Blue chip industrials
-- Companies with quarterly cycles (Jan/Apr/Jul/Oct typical reporting months)
+TASK: Find companies scheduled to report earnings in the next {upcoming_days} days.
 
-Return ONLY valid JSON with your best estimates (10-20 companies maximum):
+SOURCES TO CHECK:
+1. Yahoo Finance Earnings Calendar
+2. Nasdaq Earnings Calendar
+3. MarketBeat Earnings Calendar
+4. Earnings Whispers
+5. Any financial news sites with earnings schedules
+
+REQUIREMENTS:
+- Only include companies with market cap > $2 billion
+- Focus on US stocks (NYSE, NASDAQ)
+- Include both confirmed and estimated earnings dates
+
+Return ONLY valid JSON with REAL data from your web search:
 
 {{
   "results": [
@@ -188,18 +211,19 @@ Return ONLY valid JSON with your best estimates (10-20 companies maximum):
       "report_date": "2025-01-30",
       "report_time": "AMC",
       "eps_estimate": 2.10,
-      "revenue_estimate": 120000000000
+      "revenue_estimate": 120000000000,
+      "source": "Yahoo Finance"
     }}
   ]
 }}
 
-Requirements:
-- Only include symbols with market cap > $2 billion
-- report_time: "BMO" (before market), "AMC" (after market), or "UNKNOWN"
-- Provide reasonable EPS/revenue estimates based on company size
-- Return empty results [] if you cannot identify any earnings in this period
-- ONLY return the JSON structure, no markdown or explanations
-- Focus on US stocks (NYSE, NASDAQ)"""
+CRITICAL RULES:
+- Only include earnings dates you found in actual web sources
+- Include the source in the "source" field (e.g., "Yahoo Finance", "Nasdaq.com")
+- report_time: "BMO" (before market open), "AMC" (after market close), or "UNKNOWN"
+- If you can't find any earnings data for this period, return: {{"results": []}}
+- DO NOT estimate or guess - only real findings from your web search
+- ONLY return the JSON structure, no markdown or explanations"""
 
         try:
             logging.warning("[GROK] Calling Grok API for earnings calendar...")  # Changed to WARNING to ensure visibility
