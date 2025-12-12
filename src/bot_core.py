@@ -573,10 +573,20 @@ class OptionsBot:
                                     )
                                     continue  # Skip displaying this spread
 
-                                # If only one leg exists, log warning but still display (may be partial fill/close)
+                                # CRITICAL: If only ONE leg exists, the spread is broken - close it in database
                                 if not short_leg_found or not long_leg_found:
                                     missing_leg = "short" if not short_leg_found else "long"
-                                    logging.warning(f"[SPREAD] {symbol}: {missing_leg} leg not found in Alpaca - may be partial position")
+                                    logging.error(f"[SPREAD] {symbol}: {missing_leg} leg not found - BROKEN SPREAD detected!")
+                                    logging.error(f"[SPREAD] {symbol}: Closing broken spread in database (ID: {spread['id']})")
+
+                                    # Close the spread in database with current value
+                                    # This prevents incorrect P&L calculations
+                                    self.spread_manager.close_spread_position(
+                                        spread_id=spread['id'],
+                                        exit_price=short_current_price if short_leg_found else long_current_price,
+                                        exit_reason=f"Broken spread - {missing_leg} leg missing from Alpaca"
+                                    )
+                                    continue  # Skip displaying this broken spread
 
                                 # Total spread P&L is sum of both legs (Alpaca already calculated correctly)
                                 unrealized_pnl = short_leg_pnl + long_leg_pnl
