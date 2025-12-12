@@ -4743,12 +4743,12 @@ Example: AAPL|EXIT|Stock momentum reversed, exit signal"""
         # While credit spreads have defined risk, we should still exit at a loss threshold
         # to preserve capital and avoid tying up margin in losing positions
         max_risk = position.get('max_risk', 0)
-        stop_loss_pct = getattr(self.spread_strategy, 'STOP_LOSS_PCT', -0.75)  # -75% of max profit
+        stop_loss_pct = getattr(self.spread_strategy, 'STOP_LOSS_PCT', -0.50)  # -50% of credit (default)
 
         if pnl_pct <= stop_loss_pct:
             loss_amount = -unrealized_pnl
             pct_of_max_risk = (loss_amount / max_risk * 100) if max_risk > 0 else 0
-            logging.error(f"[SPREAD] {symbol}: STOP LOSS - Loss ${loss_amount:.0f} ({pnl_pct:.1%} of max profit, {pct_of_max_risk:.0f}% of max risk)")
+            logging.error(f"[SPREAD] {symbol}: STOP LOSS - Loss ${loss_amount:.0f} ({pnl_pct:.1%} of credit received, {pct_of_max_risk:.0f}% of max risk)")
             print(f"{Colors.ERROR}[SPREAD EXIT] {symbol}: STOP LOSS - Loss ${loss_amount:.0f} ({pnl_pct:.1%}) - Closing spread{Colors.RESET}")
             self._close_spread_position(position, f"STOP_LOSS (${loss_amount:.0f} loss)")
             return
