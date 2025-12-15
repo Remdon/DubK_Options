@@ -409,15 +409,15 @@ class BullPutSpreadStrategy:
                           f"(15% OTM from ${stock_price:.2f})")
             return None
 
-        # Validate short strike delta (should be -0.20 to -0.40 for 10-20% OTM)
+        # Validate short strike delta (should be -0.10 to -0.40 for good balance)
         short_delta = short_put.get('delta', 0)
         if short_delta != 0:  # Only validate if delta is available
-            if not (-0.40 <= short_delta <= -0.15):
-                logging.warning(f"[SPREAD] {symbol}: Short put delta {short_delta:.3f} outside optimal range "
-                              f"(-0.40 to -0.15). May not be properly OTM.")
+            if not (-0.45 <= short_delta <= -0.05):
+                logging.warning(f"[SPREAD] {symbol}: Short put delta {short_delta:.3f} outside acceptable range "
+                              f"(-0.45 to -0.05). May be too far ITM/OTM.")
                 # Continue anyway - delta might be stale or inaccurate
             else:
-                logging.debug(f"[SPREAD] {symbol}: Short put delta {short_delta:.3f} ✓ (within optimal range)")
+                logging.debug(f"[SPREAD] {symbol}: Short put delta {short_delta:.3f} ✓ (within acceptable range)")
 
         # Find long strike (SPREAD_WIDTH below short strike)
         long_strike_target = short_put['strike'] - self.SPREAD_WIDTH

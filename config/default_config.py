@@ -123,11 +123,11 @@ class Config:
         self.SPREAD_MIN_IV_RANK = float(os.getenv('SPREAD_MIN_IV_RANK', '30'))  # Require higher IV for better premium (was 20)
         self.SPREAD_MAX_IV_RANK = float(os.getenv('SPREAD_MAX_IV_RANK', '100'))  # Can sell at any high IV
 
-        # Spread construction parameters (CONSERVATIVE - Smaller risk per trade)
-        self.SPREAD_WIDTH = float(os.getenv('SPREAD_WIDTH', '3.00'))  # $3 wide spreads (was $5) - reduce max risk
+        # Spread construction parameters (BALANCED - Good risk/reward)
+        self.SPREAD_WIDTH = float(os.getenv('SPREAD_WIDTH', '5.00'))  # $5 wide spreads - standard width
         self.SPREAD_MIN_CREDIT = float(os.getenv('SPREAD_MIN_CREDIT', '0.30'))  # Minimum $0.30 credit for good risk/reward
-        self.SPREAD_MAX_CAPITAL_PER_SPREAD = float(os.getenv('SPREAD_MAX_CAPITAL_PER_SPREAD', '300'))  # Max $300 risk per spread (was $500)
-        self.SPREAD_SHORT_STRIKE_DELTA = float(os.getenv('SPREAD_SHORT_STRIKE_DELTA', '-0.25'))  # Target -0.25 delta (30% OTM, higher prob of profit)
+        self.SPREAD_MAX_CAPITAL_PER_SPREAD = float(os.getenv('SPREAD_MAX_CAPITAL_PER_SPREAD', '500'))  # Max $500 risk per spread
+        self.SPREAD_SHORT_STRIKE_DELTA = float(os.getenv('SPREAD_SHORT_STRIKE_DELTA', '-0.30'))  # Target -0.30 delta (sweet spot for credit spreads)
 
         # Spread position limits
         self.MAX_SPREAD_POSITIONS = int(os.getenv('MAX_SPREAD_POSITIONS', '15'))  # Max 15 spreads
