@@ -114,20 +114,20 @@ class Config:
         # Lower capital requirement ($300-500 vs $2,000+ for Wheel)
         # 65-75% win rate, defined max loss
 
-        # Spread stock quality filters
-        self.SPREAD_MIN_STOCK_PRICE = float(os.getenv('SPREAD_MIN_STOCK_PRICE', '20.00'))  # Affordable spreads
+        # Spread stock quality filters (CONSERVATIVE - Avoid extreme volatility)
+        self.SPREAD_MIN_STOCK_PRICE = float(os.getenv('SPREAD_MIN_STOCK_PRICE', '30.00'))  # Higher minimum to filter penny stocks
         self.SPREAD_MAX_STOCK_PRICE = float(os.getenv('SPREAD_MAX_STOCK_PRICE', '300.00'))  # Can trade higher prices (defined risk)
-        self.SPREAD_MIN_MARKET_CAP = float(os.getenv('SPREAD_MIN_MARKET_CAP', '2000000000'))  # $2B minimum
+        self.SPREAD_MIN_MARKET_CAP = float(os.getenv('SPREAD_MIN_MARKET_CAP', '5000000000'))  # $5B minimum (was $2B) - larger, more stable companies
 
         # Spread IV requirements (TIGHTENED - Strategy showing 50% win rate with -$1,315 loss)
         self.SPREAD_MIN_IV_RANK = float(os.getenv('SPREAD_MIN_IV_RANK', '30'))  # Require higher IV for better premium (was 20)
         self.SPREAD_MAX_IV_RANK = float(os.getenv('SPREAD_MAX_IV_RANK', '100'))  # Can sell at any high IV
 
-        # Spread construction parameters
-        self.SPREAD_WIDTH = float(os.getenv('SPREAD_WIDTH', '5.00'))  # $5 wide spreads (standard)
-        self.SPREAD_MIN_CREDIT = float(os.getenv('SPREAD_MIN_CREDIT', '0.25'))  # Increased from $0.15 - need better risk/reward
-        self.SPREAD_MAX_CAPITAL_PER_SPREAD = float(os.getenv('SPREAD_MAX_CAPITAL_PER_SPREAD', '500'))  # Max $500 risk per spread
-        self.SPREAD_SHORT_STRIKE_DELTA = float(os.getenv('SPREAD_SHORT_STRIKE_DELTA', '-0.35'))  # More OTM (was -0.30) for safety
+        # Spread construction parameters (CONSERVATIVE - Smaller risk per trade)
+        self.SPREAD_WIDTH = float(os.getenv('SPREAD_WIDTH', '3.00'))  # $3 wide spreads (was $5) - reduce max risk
+        self.SPREAD_MIN_CREDIT = float(os.getenv('SPREAD_MIN_CREDIT', '0.30'))  # Minimum $0.30 credit for good risk/reward
+        self.SPREAD_MAX_CAPITAL_PER_SPREAD = float(os.getenv('SPREAD_MAX_CAPITAL_PER_SPREAD', '300'))  # Max $300 risk per spread (was $500)
+        self.SPREAD_SHORT_STRIKE_DELTA = float(os.getenv('SPREAD_SHORT_STRIKE_DELTA', '-0.25'))  # Target -0.25 delta (30% OTM, higher prob of profit)
 
         # Spread position limits
         self.MAX_SPREAD_POSITIONS = int(os.getenv('MAX_SPREAD_POSITIONS', '15'))  # Max 15 spreads
@@ -138,9 +138,9 @@ class Config:
         self.SPREAD_MIN_DTE = int(os.getenv('SPREAD_MIN_DTE', '21'))  # Minimum 21 days
         self.SPREAD_MAX_DTE = int(os.getenv('SPREAD_MAX_DTE', '60'))  # Maximum 60 days
 
-        # Spread exit rules (ADJUSTED - Tighter stop loss to preserve capital)
+        # Spread exit rules (CONSERVATIVE - Wider stop loss for defined-risk strategy)
         self.SPREAD_PROFIT_TARGET_PCT = float(os.getenv('SPREAD_PROFIT_TARGET_PCT', '0.50'))  # Close at 50% profit
-        self.SPREAD_STOP_LOSS_PCT = float(os.getenv('SPREAD_STOP_LOSS_PCT', '-0.50'))  # Tighter stop at -50% (was -75%)
+        self.SPREAD_STOP_LOSS_PCT = float(os.getenv('SPREAD_STOP_LOSS_PCT', '-2.00'))  # Stop at -200% of credit (2x max loss before hitting max risk)
 
         # =====================================================================
         # STRATEGY-SPECIFIC EXPIRATION EXITS
