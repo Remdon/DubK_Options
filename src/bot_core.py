@@ -44,6 +44,7 @@ from src.scanners import ExpertMarketScanner
 from src.core import TradeJournal, AlertManager, MarketCalendar, ScanResultCache
 from src.core.colors import Colors
 from src.risk import PortfolioManager, PositionManager
+from src.risk.pdt_tracker import PDTTracker
 from src.strategies import (
     OptionsValidator, MultiLegOptionsManager,
     MultiLegOrderManager, MultiLegOrderTracker,
@@ -250,6 +251,7 @@ class OptionsBot:
         self.spread_trading_client = None
         self.spread_manager = None
         self.spread_strategy = None
+        self.pdt_tracker = None
 
         if config.ALPACA_BULL_PUT_KEY and config.ALPACA_BULL_PUT_SECRET_KEY:
             try:
@@ -276,6 +278,10 @@ class OptionsBot:
                 )
                 self.spread_strategy.spread_db = self.spread_manager  # Link database manager
                 logging.info(f"[SPREAD] Bull Put Spread Strategy initialized - 65-75% win rate expected")
+
+                # Initialize PDT tracker for spread account (<$25k, needs PDT protection)
+                self.pdt_tracker = PDTTracker(db_path='spreads.db')
+                logging.info(f"[SPREAD] PDT tracker initialized - protecting against pattern day trading violations")
 
                 # CRITICAL: Reconcile existing Alpaca positions on startup
                 imported = self.spread_manager.reconcile_spreads_from_alpaca(self.spread_trading_client)
@@ -4336,6 +4342,25 @@ Example: AAPL|EXIT|Stock momentum reversed, exit signal"""
             logging.info(f"[SPREAD]   Target Credit: ${credit:.2f} per spread")
             logging.info(f"[SPREAD]   Total Credit: ${credit * contracts:.2f}")
 
+            # CRITICAL: Check PDT limits before opening new positions
+            # Opening new positions when day trade budget is exhausted creates risk
+            # of being unable to close if stop loss triggers same day
+            if self.pdt_tracker:
+                can_open, pdt_msg = self.pdt_tracker.should_open_position()
+
+                if not can_open:
+                    logging.error(f"[SPREAD] ⛔ PDT LIMIT - Cannot open {symbol}: {pdt_msg}")
+                    print(f"{Colors.ERROR}[SPREAD] ⛔ {pdt_msg}{Colors.RESET}")
+                    print(f"{Colors.WARNING}[SPREAD] Skipping {symbol} - wait for day trade window to reset{Colors.RESET}")
+                    return False
+
+                # Log PDT status (especially warnings for last day trade)
+                if "Warning" in pdt_msg or "remaining" in pdt_msg.lower():
+                    logging.warning(f"[SPREAD] {pdt_msg}")
+                    print(f"{Colors.WARNING}[SPREAD] {pdt_msg}{Colors.RESET}")
+                else:
+                    logging.info(f"[SPREAD] PDT check: {pdt_msg}")
+
             from alpaca.trading.requests import LimitOrderRequest, OptionLegRequest
             from alpaca.trading.enums import OrderSide, TimeInForce, OrderClass, PositionIntent
 
@@ -4804,10 +4829,63 @@ Example: AAPL|EXIT|Stock momentum reversed, exit signal"""
             short_put_symbol = position['short_put_symbol']
             long_put_symbol = position['long_put_symbol']
             num_contracts = position['num_contracts']
+            entry_date = position.get('entry_date')
 
             logging.info(f"[SPREAD CLOSE] ═══════════════════════════════════════════════════")
             logging.info(f"[SPREAD CLOSE] Closing {symbol} spread - Reason: {reason}")
             logging.info(f"[SPREAD CLOSE] ═══════════════════════════════════════════════════")
+
+            # CRITICAL: Check for Pattern Day Trading (PDT) violation
+            # If position opened today and we close it, that's a day trade
+            # Accounts <$25k limited to 3 day trades per 5 business days
+            if self.pdt_tracker:
+                entry_datetime = None
+                if entry_date:
+                    try:
+                        if isinstance(entry_date, str):
+                            entry_datetime = datetime.fromisoformat(entry_date.replace('Z', '+00:00'))
+                        else:
+                            entry_datetime = entry_date
+                    except:
+                        pass
+
+                # Check if this would be a day trade
+                is_day_trade = False
+                if entry_datetime:
+                    today = datetime.now().date()
+                    entry_day = entry_datetime.date()
+                    is_day_trade = (entry_day == today)
+
+                if is_day_trade:
+                    # This would be a day trade
+                    can_trade = self.pdt_tracker.can_day_trade(reserve_for_emergency=False)
+                    remaining = self.pdt_tracker.get_remaining_day_trades(reserve_for_emergency=False)
+
+                    if not can_trade:
+                        # PDT limit exhausted - cannot close today
+                        logging.error(
+                            f"[SPREAD CLOSE] ⛔ PDT LIMIT REACHED - Cannot close {symbol} today "
+                            f"({self.pdt_tracker.get_day_trade_count()}/3 day trades used). "
+                            f"Position opened today and must be held overnight to avoid PDT violation."
+                        )
+                        print(
+                            f"{Colors.ERROR}[SPREAD CLOSE] ⛔ PDT PROTECTION: Cannot close {symbol} "
+                            f"(day trade #{remaining+1} would exceed 3/5 day limit){Colors.RESET}"
+                        )
+                        print(
+                            f"{Colors.WARNING}[SPREAD CLOSE] Position will be re-evaluated tomorrow.{Colors.RESET}"
+                        )
+                        return False
+
+                    # Log warning that this will use a day trade
+                    logging.warning(
+                        f"[SPREAD CLOSE] ⚠️ Day trade #{self.pdt_tracker.get_day_trade_count() + 1} - "
+                        f"Closing same-day position ({remaining} day trades remaining)"
+                    )
+                    print(
+                        f"{Colors.WARNING}[SPREAD CLOSE] ⚠️ Using day trade #{self.pdt_tracker.get_day_trade_count() + 1}/3 "
+                        f"to close {symbol}{Colors.RESET}"
+                    )
 
             # CRITICAL: Cancel any existing orders for this spread's legs before closing
             # If there are pending orders, the quantity will be held and unavailable
@@ -4927,6 +5005,16 @@ Example: AAPL|EXIT|Stock momentum reversed, exit signal"""
                 exit_price=exit_price,
                 exit_reason=reason
             )
+
+            # Record day trade if applicable
+            if self.pdt_tracker and is_day_trade:
+                self.pdt_tracker.record_day_trade(
+                    symbol=symbol,
+                    account="spread",
+                    open_time=entry_datetime,
+                    close_time=datetime.now(),
+                    notes=reason
+                )
 
             logging.info(f"[SPREAD CLOSE] ✓ Spread position #{spread_id} closed - {reason}")
             logging.info(f"[SPREAD CLOSE] ═══════════════════════════════════════════════════")
