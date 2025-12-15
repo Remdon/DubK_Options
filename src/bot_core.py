@@ -4809,6 +4809,35 @@ Example: AAPL|EXIT|Stock momentum reversed, exit signal"""
             logging.info(f"[SPREAD CLOSE] Closing {symbol} spread - Reason: {reason}")
             logging.info(f"[SPREAD CLOSE] ═══════════════════════════════════════════════════")
 
+            # CRITICAL: Cancel any existing orders for this spread's legs before closing
+            # If there are pending orders, the quantity will be held and unavailable
+            from alpaca.trading.enums import QueryOrderStatus
+            import time
+
+            try:
+                # Get all open orders
+                open_orders = self.spread_trading_client.get_orders(filter=QueryOrderStatus.OPEN)
+
+                # Cancel orders for either leg of this spread
+                canceled_count = 0
+                for order in open_orders:
+                    if order.symbol in [short_put_symbol, long_put_symbol]:
+                        logging.warning(f"[SPREAD CLOSE] Canceling existing order {order.id} for {order.symbol}")
+                        try:
+                            self.spread_trading_client.cancel_order_by_id(order.id)
+                            canceled_count += 1
+                            print(f"{Colors.WARNING}[SPREAD CLOSE] ⚠ Canceled pending order {order.id} for {order.symbol}{Colors.RESET}")
+                        except Exception as cancel_err:
+                            logging.warning(f"[SPREAD CLOSE] Could not cancel order {order.id}: {cancel_err}")
+
+                # Brief delay to ensure cancellations are processed
+                if canceled_count > 0:
+                    logging.info(f"[SPREAD CLOSE] Waiting 2 seconds for {canceled_count} order cancellation(s) to process...")
+                    time.sleep(2)
+
+            except Exception as e:
+                logging.warning(f"[SPREAD CLOSE] Could not check/cancel existing orders: {e}")
+
             # Get current exit price before closing
             exit_price = self._get_spread_current_value(position)
 
