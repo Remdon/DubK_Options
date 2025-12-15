@@ -4811,12 +4811,18 @@ Example: AAPL|EXIT|Stock momentum reversed, exit signal"""
 
             # CRITICAL: Cancel any existing orders for this spread's legs before closing
             # If there are pending orders, the quantity will be held and unavailable
+            from alpaca.trading.requests import GetOrdersRequest
             from alpaca.trading.enums import QueryOrderStatus
             import time
 
             try:
                 # Get all open orders
-                open_orders = self.spread_trading_client.get_orders(filter=QueryOrderStatus.OPEN)
+                order_filter = GetOrdersRequest(status=QueryOrderStatus.OPEN)
+                open_orders = self.spread_trading_client.get_orders(filter=order_filter)
+
+                # Handle case where get_orders returns None
+                if open_orders is None:
+                    open_orders = []
 
                 # Cancel orders for either leg of this spread
                 canceled_count = 0
