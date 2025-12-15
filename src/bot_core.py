@@ -252,6 +252,7 @@ class OptionsBot:
         self.spread_manager = None
         self.spread_strategy = None
         self.pdt_tracker = None
+        self.pdt_blocked_today = set()  # Track positions blocked by PDT today (reset daily)
 
         if config.ALPACA_BULL_PUT_KEY and config.ALPACA_BULL_PUT_SECRET_KEY:
             try:
@@ -4745,6 +4746,10 @@ Example: AAPL|EXIT|Stock momentum reversed, exit signal"""
         credit_received = position['total_credit']
         max_profit = position['max_profit']
 
+        # Skip if position was PDT-blocked today (avoid spam)
+        if symbol in self.pdt_blocked_today:
+            return
+
         # Calculate P&L
         # For credit spreads: P&L = credit received - current value
         unrealized_pnl = (credit_received - current_value) * 100
@@ -4996,8 +5001,34 @@ Example: AAPL|EXIT|Stock momentum reversed, exit signal"""
             )
 
             logging.info(f"[SPREAD CLOSE] Submitting multi-leg close order for {symbol} spread")
-            close_order = self.spread_trading_client.submit_order(close_order_request)
-            logging.info(f"[SPREAD CLOSE] ✓ Multi-leg close order placed - Order ID: {close_order.id}")
+
+            try:
+                close_order = self.spread_trading_client.submit_order(close_order_request)
+                logging.info(f"[SPREAD CLOSE] ✓ Multi-leg close order placed - Order ID: {close_order.id}")
+            except Exception as order_error:
+                # Check if this is a PDT violation from Alpaca
+                error_str = str(order_error)
+                if "40310100" in error_str or "pattern day trading protection" in error_str.lower():
+                    # Alpaca blocked the trade due to PDT at API level
+                    logging.error(
+                        f"[SPREAD CLOSE] ⛔ ALPACA PDT BLOCK - Cannot close {symbol} "
+                        f"(account-level day trade limit reached)"
+                    )
+                    print(
+                        f"{Colors.ERROR}[SPREAD CLOSE] ⛔ PDT LIMIT REACHED by Alpaca - "
+                        f"{symbol} must be held overnight{Colors.RESET}"
+                    )
+                    print(
+                        f"{Colors.WARNING}[SPREAD CLOSE] Position will be re-evaluated tomorrow{Colors.RESET}"
+                    )
+
+                    # Track this position to avoid retry spam
+                    self.pdt_blocked_today.add(symbol)
+
+                    return False
+                else:
+                    # Different error - re-raise for normal error handling
+                    raise
 
             # Update database with close details
             self.spread_manager.close_spread_position(
@@ -5026,9 +5057,16 @@ Example: AAPL|EXIT|Stock momentum reversed, exit signal"""
             return True
 
         except Exception as e:
-            logging.error(f"[SPREAD CLOSE] ❌ Error closing spread position: {e}", exc_info=True)
-            print(f"{Colors.ERROR}[SPREAD EXIT] ❌ Failed to close {position['symbol']}: {str(e)}{Colors.RESET}")
-            return False
+            # Check if this is a PDT error (don't log full traceback for known PDT issues)
+            error_str = str(e)
+            if "40310100" in error_str or "pattern day trading protection" in error_str.lower():
+                # PDT error already handled above, just return False
+                return False
+            else:
+                # Other error - log full traceback
+                logging.error(f"[SPREAD CLOSE] ❌ Error closing spread position: {e}", exc_info=True)
+                print(f"{Colors.ERROR}[SPREAD EXIT] ❌ Failed to close {position['symbol']}: {str(e)}{Colors.RESET}")
+                return False
 
     def _execute_wheel_call_sale(self, symbol: str, call_details: Dict) -> bool:
         """
