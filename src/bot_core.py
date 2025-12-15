@@ -4784,9 +4784,12 @@ Example: AAPL|EXIT|Stock momentum reversed, exit signal"""
 
     def _close_spread_position(self, position: Dict, reason: str) -> bool:
         """
-        Close spread position by executing buy-to-close orders for both legs.
+        Close spread position using a multi-leg order.
 
-        Bull Put Spread Close = Buy back short put + Sell back long put
+        CRITICAL: Must use OrderClass.MLEG to close spreads properly!
+        Closing legs separately requires buying power as if opening new positions.
+
+        Bull Put Spread Close = Buy back short put + Sell back long put (as one MLEG order)
 
         Args:
             position: Spread position dict
@@ -4809,8 +4812,8 @@ Example: AAPL|EXIT|Stock momentum reversed, exit signal"""
             # Get current exit price before closing
             exit_price = self._get_spread_current_value(position)
 
-            from alpaca.trading.requests import LimitOrderRequest
-            from alpaca.trading.enums import OrderSide, TimeInForce
+            from alpaca.trading.requests import LimitOrderRequest, OptionLegRequest
+            from alpaca.trading.enums import OrderSide, TimeInForce, OrderClass, PositionIntent
 
             # Get current option prices for limit orders
             options = self.spread_strategy._get_options_chain(symbol)
@@ -4829,6 +4832,7 @@ Example: AAPL|EXIT|Stock momentum reversed, exit signal"""
                       abs(opt['strike'] - long_strike) < 0.01):
                     long_put = opt
 
+            # Calculate individual leg prices
             # LEG 1: BUY TO CLOSE the short put (we sold this, now buying back)
             if short_put:
                 short_close_price = round(short_put['ask'] * 1.05, 2)  # Pay 5% over ask for quick fill
@@ -4836,18 +4840,6 @@ Example: AAPL|EXIT|Stock momentum reversed, exit signal"""
                 short_close_price = max(short_close_price, 0.05)
             else:
                 short_close_price = 0.50  # Fallback price
-
-            logging.info(f"[SPREAD CLOSE] Buying to close SHORT put: {short_put_symbol} @ ${short_close_price}")
-            short_close_order = LimitOrderRequest(
-                symbol=short_put_symbol,
-                qty=num_contracts,
-                side=OrderSide.BUY,  # Buy to close the short position
-                time_in_force=TimeInForce.DAY,
-                limit_price=short_close_price
-            )
-
-            short_order = self.spread_trading_client.submit_order(short_close_order)
-            logging.info(f"[SPREAD CLOSE] ✓ Short put buy-to-close order placed - Order ID: {short_order.id}")
 
             # LEG 2: SELL TO CLOSE the long put (we bought this, now selling back)
             if long_put:
@@ -4857,17 +4849,42 @@ Example: AAPL|EXIT|Stock momentum reversed, exit signal"""
             else:
                 long_close_price = 0.10  # Fallback price
 
-            logging.info(f"[SPREAD CLOSE] Selling to close LONG put: {long_put_symbol} @ ${long_close_price}")
-            long_close_order = LimitOrderRequest(
-                symbol=long_put_symbol,
-                qty=num_contracts,
-                side=OrderSide.SELL,  # Sell to close the long position
-                time_in_force=TimeInForce.DAY,
-                limit_price=long_close_price
+            # Calculate net debit (cost to close the spread)
+            # Closing a credit spread = pay debit to buy it back
+            net_debit = round(short_close_price - long_close_price, 2)
+
+            logging.info(f"[SPREAD CLOSE] Short put close: ${short_close_price}, Long put close: ${long_close_price}")
+            logging.info(f"[SPREAD CLOSE] Net debit to close spread: ${net_debit:.2f}")
+
+            # Create multi-leg close order
+            short_leg = OptionLegRequest(
+                symbol=short_put_symbol,
+                ratio_qty=num_contracts,
+                side=OrderSide.BUY,
+                position_intent=PositionIntent.BUY_TO_CLOSE
             )
 
-            long_order = self.spread_trading_client.submit_order(long_close_order)
-            logging.info(f"[SPREAD CLOSE] ✓ Long put sell-to-close order placed - Order ID: {long_order.id}")
+            long_leg = OptionLegRequest(
+                symbol=long_put_symbol,
+                ratio_qty=num_contracts,
+                side=OrderSide.SELL,
+                position_intent=PositionIntent.SELL_TO_CLOSE
+            )
+
+            # Submit multi-leg close order
+            # For closing: BUY the spread back (opposite of SELL to open)
+            close_order_request = LimitOrderRequest(
+                qty=num_contracts,
+                side=OrderSide.BUY,  # BUY to close a credit spread
+                time_in_force=TimeInForce.DAY,
+                order_class=OrderClass.MLEG,
+                limit_price=net_debit,  # POSITIVE debit (we pay to close)
+                legs=[short_leg, long_leg]
+            )
+
+            logging.info(f"[SPREAD CLOSE] Submitting multi-leg close order for {symbol} spread")
+            close_order = self.spread_trading_client.submit_order(close_order_request)
+            logging.info(f"[SPREAD CLOSE] ✓ Multi-leg close order placed - Order ID: {close_order.id}")
 
             # Update database with close details
             self.spread_manager.close_spread_position(
@@ -4880,8 +4897,8 @@ Example: AAPL|EXIT|Stock momentum reversed, exit signal"""
             logging.info(f"[SPREAD CLOSE] ═══════════════════════════════════════════════════")
 
             print(f"{Colors.SUCCESS}✓ [SPREAD EXIT] {symbol}: Position closed - {reason}{Colors.RESET}")
-            print(f"{Colors.INFO}[SPREAD EXIT]   Short close order: {short_order.id}{Colors.RESET}")
-            print(f"{Colors.INFO}[SPREAD EXIT]   Long close order: {long_order.id}{Colors.RESET}")
+            print(f"{Colors.INFO}[SPREAD EXIT]   Multi-leg close order: {close_order.id}{Colors.RESET}")
+            print(f"{Colors.INFO}[SPREAD EXIT]   Net debit: ${net_debit:.2f}{Colors.RESET}")
 
             return True
 
