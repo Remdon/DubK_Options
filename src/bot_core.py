@@ -4832,10 +4832,12 @@ Example: AAPL|EXIT|Stock momentum reversed, exit signal"""
             # LEG 1: BUY TO CLOSE the short put (we sold this, now buying back)
             if short_put:
                 short_close_price = round(short_put['ask'] * 1.05, 2)  # Pay 5% over ask for quick fill
+                # Ensure minimum price to avoid Alpaca API error
+                short_close_price = max(short_close_price, 0.05)
             else:
                 short_close_price = 0.50  # Fallback price
 
-            logging.info(f"[SPREAD CLOSE] Buying to close SHORT put: {short_put_symbol}")
+            logging.info(f"[SPREAD CLOSE] Buying to close SHORT put: {short_put_symbol} @ ${short_close_price}")
             short_close_order = LimitOrderRequest(
                 symbol=short_put_symbol,
                 qty=num_contracts,
@@ -4850,10 +4852,12 @@ Example: AAPL|EXIT|Stock momentum reversed, exit signal"""
             # LEG 2: SELL TO CLOSE the long put (we bought this, now selling back)
             if long_put:
                 long_close_price = round(long_put['bid'] * 0.95, 2)  # Accept 5% below bid for quick fill
+                # Ensure minimum price to avoid Alpaca API error
+                long_close_price = max(long_close_price, 0.01)
             else:
                 long_close_price = 0.10  # Fallback price
 
-            logging.info(f"[SPREAD CLOSE] Selling to close LONG put: {long_put_symbol}")
+            logging.info(f"[SPREAD CLOSE] Selling to close LONG put: {long_put_symbol} @ ${long_close_price}")
             long_close_order = LimitOrderRequest(
                 symbol=long_put_symbol,
                 qty=num_contracts,
