@@ -311,32 +311,35 @@ class BullPutSpreadStrategy:
 
             # CRITICAL: Check earnings date (avoid IV crush)
             # Spreads are killed by earnings - IV drops and spreads get tested
+            # Extended to 21 days minimum buffer (IV crush can happen before actual report)
             try:
                 if hasattr(self.scanner, 'earnings_calendar') and self.scanner.earnings_calendar:
                     earnings_risk = self.scanner.earnings_calendar.check_earnings_risk(symbol)
 
-                    # Reject if earnings within 14 days (prevent IV crush)
+                    # Reject if earnings within 21 days (prevent IV crush + pre-earnings volatility)
                     # earnings_risk returns: {'risk': 'HIGH/MODERATE/LOW', 'days_until': X, 'action': 'AVOID/CAUTION/PROCEED'}
                     if earnings_risk.get('days_until') is not None:
                         days_until = earnings_risk['days_until']
 
-                        if 0 < days_until < 14:
+                        if 0 < days_until < 21:
                             rejection_reasons['earnings'] += 1
-                            rejected_details.append(f"{symbol}: earnings in {days_until} days (need >=14 days)")
-                            logging.warning(f"[SPREAD FILTER] ✗ {symbol}: Earnings in {days_until} days - SKIPPING to avoid IV crush")
+                            rejected_details.append(f"{symbol}: earnings in {days_until} days (need >=21 days)")
+                            logging.warning(f"[SPREAD FILTER] ✗ {symbol}: Earnings in {days_until} days - SKIPPING (need 21+ day buffer to avoid IV crush)")
                             continue
             except Exception as e:
                 logging.debug(f"[SPREAD] Could not check earnings for {symbol}: {e}")
                 # Don't reject on error - continue without earnings check
 
-            # Check for strong bearish bias (bull put spreads need neutral-to-bullish)
-            # This is a soft filter - we log warnings but don't reject entirely
-            # (spread can still work even in mild downtrend if properly OTM)
+            # CRITICAL: Check for strong bearish bias (bull put spreads need neutral-to-bullish)
+            # HARD REJECT on bearish conditions - spreads get destroyed in downtrends
             try:
                 if 'technical_bias' in stock:
                     bias = stock.get('technical_bias', '').lower()
-                    if 'strong bear' in bias or 'very bearish' in bias:
-                        logging.warning(f"[SPREAD FILTER] ⚠ {symbol}: Strong bearish bias detected - spread may be risky")
+                    if any(keyword in bias for keyword in ['strong bear', 'very bearish', 'strongly bearish', 'extreme bear']):
+                        rejection_reasons['bias'] = rejection_reasons.get('bias', 0) + 1
+                        rejected_details.append(f"{symbol}: strong bearish bias detected (spreads need neutral-bullish)")
+                        logging.warning(f"[SPREAD FILTER] ✗ {symbol}: Strong bearish bias '{bias}' - REJECTING (bull put spreads need uptrend)")
+                        continue  # Skip this candidate
             except Exception as e:
                 logging.debug(f"[SPREAD] Could not check technical bias for {symbol}: {e}")
 
@@ -399,25 +402,30 @@ class BullPutSpreadStrategy:
             logging.warning(f"[SPREAD] {symbol}: Only {len(puts)} put(s) available for {target_expiration}, need at least 2")
             return None
 
-        # Find short strike (10-20% OTM for better credit collection)
-        # 25% OTM was too far - not collecting enough premium
-        short_strike_target = stock_price * 0.85  # 15% OTM as starting point (better credit)
+        # Find short strike using delta targeting (25-35% OTM sweet spot)
+        # Delta -0.25 to -0.35 provides optimal balance of premium vs. safety
+        # This corresponds to ~75-65% probability of expiring OTM
+
+        # Target delta -0.30 (30% OTM, 70% probability of success)
+        # Start with price-based estimate, then refine by delta
+        short_strike_target = stock_price * 0.70  # ~30% OTM as starting point
         short_put = self._find_closest_strike(puts, short_strike_target, 'short')
 
         if not short_put:
             logging.warning(f"[SPREAD] {symbol}: No short put found near ${short_strike_target:.2f} "
-                          f"(15% OTM from ${stock_price:.2f})")
+                          f"(30% OTM from ${stock_price:.2f})")
             return None
 
-        # Validate short strike delta (should be -0.10 to -0.40 for good balance)
+        # CRITICAL: Validate short strike delta (must be in safe range)
+        # Delta -0.20 to -0.35 = 20-35% OTM sweet spot for spreads
         short_delta = short_put.get('delta', 0)
         if short_delta != 0:  # Only validate if delta is available
-            if not (-0.45 <= short_delta <= -0.05):
-                logging.warning(f"[SPREAD] {symbol}: Short put delta {short_delta:.3f} outside acceptable range "
-                              f"(-0.45 to -0.05). May be too far ITM/OTM.")
-                # Continue anyway - delta might be stale or inaccurate
+            if not (-0.35 <= short_delta <= -0.20):
+                logging.warning(f"[SPREAD] {symbol}: Short put delta {short_delta:.3f} outside safe range "
+                              f"(-0.35 to -0.20). Strike ${short_put['strike']:.2f} rejected - too risky.")
+                return None  # HARD REJECT - don't trade bad deltas
             else:
-                logging.debug(f"[SPREAD] {symbol}: Short put delta {short_delta:.3f} ✓ (within acceptable range)")
+                logging.debug(f"[SPREAD] {symbol}: Short put delta {short_delta:.3f} ✓ (safe range)")
 
         # Find long strike (SPREAD_WIDTH below short strike)
         long_strike_target = short_put['strike'] - self.SPREAD_WIDTH
@@ -461,10 +469,21 @@ class BullPutSpreadStrategy:
         dte = (datetime.strptime(target_expiration, '%Y-%m-%d') - datetime.now()).days
         annual_return = (roi / dte) * 365 if dte > 0 else 0
 
-        # Validate spread
+        # CRITICAL: Validate credit quality
+        # Credit should be 30-50% of spread width for good risk/reward
+        # Example: $5 spread should collect $1.50-2.50 credit minimum
+        credit_as_pct_of_width = (credit / spread_width) * 100 if spread_width > 0 else 0
+        min_credit_pct = 30.0  # Require minimum 30% of spread width as credit
+
         if credit < self.MIN_CREDIT:
             logging.warning(f"[SPREAD] {symbol}: Credit ${credit:.2f} (short bid ${short_premium:.2f} - long ask ${long_premium:.2f}) "
-                          f"below minimum ${self.MIN_CREDIT:.2f}")
+                          f"below absolute minimum ${self.MIN_CREDIT:.2f}")
+            return None
+
+        if credit_as_pct_of_width < min_credit_pct:
+            logging.warning(f"[SPREAD] {symbol}: Credit ${credit:.2f} only {credit_as_pct_of_width:.1f}% of "
+                          f"spread width ${spread_width:.2f} (need >={min_credit_pct}% for good risk/reward). "
+                          f"Risking ${max_risk:.0f} to make ${max_profit:.0f} is not favorable.")
             return None
 
         if max_risk > self.MAX_CAPITAL_PER_SPREAD:
