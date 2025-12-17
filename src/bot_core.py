@@ -4933,45 +4933,86 @@ Example: AAPL|EXIT|Stock momentum reversed, exit signal"""
             from alpaca.trading.requests import LimitOrderRequest, OptionLegRequest
             from alpaca.trading.enums import OrderSide, TimeInForce, OrderClass, PositionIntent
 
-            # Get current option prices for limit orders
-            options = self.spread_strategy._get_options_chain(symbol)
-            expiration = position['expiration']
-            short_strike = position['short_strike']
-            long_strike = position['long_strike']
+            # CRITICAL FIX: Get REAL-TIME prices from Alpaca positions (not cached options chain)
+            # The options chain data can be stale, causing unfillable orders
+            try:
+                alpaca_positions = self.spread_trading_client.get_all_positions()
 
-            short_put = None
-            long_put = None
+                short_current_price = None
+                long_current_price = None
 
-            for opt in options:
-                if (opt['type'] == 'put' and opt['expiration'] == expiration and
-                    abs(opt['strike'] - short_strike) < 0.01):
-                    short_put = opt
-                elif (opt['type'] == 'put' and opt['expiration'] == expiration and
-                      abs(opt['strike'] - long_strike) < 0.01):
-                    long_put = opt
+                for pos in alpaca_positions:
+                    if pos.symbol == short_put_symbol:
+                        # Real-time current price for short put
+                        short_current_price = float(pos.current_price) if pos.current_price else None
+                    elif pos.symbol == long_put_symbol:
+                        # Real-time current price for long put
+                        long_current_price = float(pos.current_price) if pos.current_price else None
 
-            # Calculate individual leg prices
+                # Validate we found both positions
+                if short_current_price is None or long_current_price is None:
+                    missing = []
+                    if short_current_price is None:
+                        missing.append(f"short put {short_put_symbol}")
+                    if long_current_price is None:
+                        missing.append(f"long put {long_put_symbol}")
+
+                    error_msg = f"Cannot close spread - missing positions in Alpaca: {', '.join(missing)}"
+                    logging.error(f"[SPREAD CLOSE] {error_msg}")
+                    print(f"{Colors.ERROR}[SPREAD CLOSE] {error_msg}{Colors.RESET}")
+                    return False
+
+            except Exception as e:
+                logging.error(f"[SPREAD CLOSE] Failed to get real-time prices from Alpaca: {e}")
+                print(f"{Colors.ERROR}[SPREAD CLOSE] Failed to get real-time prices: {e}{Colors.RESET}")
+                return False
+
+            # Calculate individual leg prices with appropriate slippage
+            # Slippage depends on exit reason (more aggressive for stop losses)
+            is_stop_loss = 'STOP_LOSS' in reason.upper()
+
             # LEG 1: BUY TO CLOSE the short put (we sold this, now buying back)
-            if short_put:
-                short_close_price = round(short_put['ask'] * 1.05, 2)  # Pay 5% over ask for quick fill
-                # Ensure minimum price to avoid Alpaca API error
-                short_close_price = max(short_close_price, 0.05)
+            if is_stop_loss:
+                # Stop loss: Use 15% slippage for fast fill (cutting losses)
+                short_close_price = round(short_current_price * 1.15, 2)
             else:
-                short_close_price = 0.50  # Fallback price
+                # Profit target: Use 10% slippage for reliable fill
+                short_close_price = round(short_current_price * 1.10, 2)
+
+            # Ensure minimum price to avoid Alpaca API error
+            short_close_price = max(short_close_price, 0.05)
 
             # LEG 2: SELL TO CLOSE the long put (we bought this, now selling back)
-            if long_put:
-                long_close_price = round(long_put['bid'] * 0.95, 2)  # Accept 5% below bid for quick fill
-                # Ensure minimum price to avoid Alpaca API error
-                long_close_price = max(long_close_price, 0.01)
+            if is_stop_loss:
+                # Stop loss: Accept 15% below current for fast fill
+                long_close_price = round(long_current_price * 0.85, 2)
             else:
-                long_close_price = 0.10  # Fallback price
+                # Profit target: Accept 10% below current
+                long_close_price = round(long_current_price * 0.90, 2)
+
+            # Ensure minimum price to avoid Alpaca API error
+            long_close_price = max(long_close_price, 0.01)
 
             # Calculate net debit (cost to close the spread)
             # Closing a credit spread = pay debit to buy it back
             net_debit = round(short_close_price - long_close_price, 2)
 
-            logging.info(f"[SPREAD CLOSE] Short put close: ${short_close_price}, Long put close: ${long_close_price}")
+            # Validate the close price is reasonable
+            spread_width = position['short_strike'] - position['long_strike']
+            max_reasonable_debit = spread_width * 1.1  # Can't cost more than 110% of spread width
+
+            if net_debit > max_reasonable_debit:
+                logging.warning(
+                    f"[SPREAD CLOSE] Calculated net debit ${net_debit:.2f} exceeds reasonable limit "
+                    f"${max_reasonable_debit:.2f} (spread width ${spread_width})"
+                )
+                # Cap the debit at max reasonable (spread might be deep ITM)
+                net_debit = round(max_reasonable_debit, 2)
+                logging.info(f"[SPREAD CLOSE] Capped net debit to ${net_debit:.2f}")
+
+            logging.info(f"[SPREAD CLOSE] Real-time prices: Short ${short_current_price:.2f}, Long ${long_current_price:.2f}")
+            logging.info(f"[SPREAD CLOSE] Close prices with slippage: Short ${short_close_price:.2f}, Long ${long_close_price:.2f}")
+            logging.info(f"[SPREAD CLOSE] Slippage factor: {'15%' if is_stop_loss else '10%'} ({'STOP LOSS' if is_stop_loss else 'PROFIT TARGET'})")
             logging.info(f"[SPREAD CLOSE] Net debit to close spread: ${net_debit:.2f}")
 
             # Create multi-leg close order
