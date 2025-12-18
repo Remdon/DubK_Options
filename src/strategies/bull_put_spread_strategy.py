@@ -417,15 +417,15 @@ class BullPutSpreadStrategy:
             return None
 
         # CRITICAL: Validate short strike delta (must be in safe range)
-        # Delta -0.10 to -0.40 = 10-40% OTM acceptable range
-        # -0.10 = 10% OTM (90% probability ITM - minimum safety)
+        # Delta -0.15 to -0.40 = 15-40% OTM acceptable range
+        # -0.15 = 15% OTM (85% probability ITM - balanced safety/premium)
         # -0.40 = 40% OTM (60% probability ITM - still profitable)
         short_delta = short_put.get('delta', 0)
         if short_delta != 0:  # Only validate if delta is available
-            if not (-0.40 <= short_delta <= -0.10):
+            if not (-0.40 <= short_delta <= -0.15):
                 logging.warning(f"[SPREAD] {symbol}: Short put delta {short_delta:.3f} outside safe range "
-                              f"(-0.40 to -0.10). Strike ${short_put['strike']:.2f} rejected - "
-                              f"{'too close to current price' if short_delta > -0.10 else 'too far OTM'}.")
+                              f"(-0.40 to -0.15). Strike ${short_put['strike']:.2f} rejected - "
+                              f"{'too close to current price' if short_delta > -0.15 else 'too far OTM'}.")
                 return None  # HARD REJECT - don't trade bad deltas
             else:
                 logging.info(f"[SPREAD] {symbol}: Short put delta {short_delta:.3f} ✓ (safe range, {abs(short_delta)*100:.0f}% OTM)")
