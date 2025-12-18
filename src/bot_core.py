@@ -4386,16 +4386,19 @@ Example: AAPL|EXIT|Stock momentum reversed, exit signal"""
             logging.info(f"[SPREAD] Placing multi-leg bull put spread order")
 
             # Create legs for the spread
+            # CRITICAL: ratio_qty must be 1 for both legs (1:1 ratio for bull put spread)
+            # The main order qty specifies how many spreads (contracts)
+            # Alpaca requires GCD(ratio_qty) = 1 (relatively prime)
             short_leg = OptionLegRequest(
                 symbol=short_put_symbol,
-                ratio_qty=contracts,
+                ratio_qty=1,  # Always 1 for 1:1 spread ratio
                 side=OrderSide.SELL,
                 position_intent=PositionIntent.SELL_TO_OPEN
             )
 
             long_leg = OptionLegRequest(
                 symbol=long_put_symbol,
-                ratio_qty=contracts,
+                ratio_qty=1,  # Always 1 for 1:1 spread ratio
                 side=OrderSide.BUY,
                 position_intent=PositionIntent.BUY_TO_OPEN
             )
@@ -5016,16 +5019,19 @@ Example: AAPL|EXIT|Stock momentum reversed, exit signal"""
             logging.info(f"[SPREAD CLOSE] Net debit to close spread: ${net_debit:.2f}")
 
             # Create multi-leg close order
+            # CRITICAL: ratio_qty must be 1 for both legs (1:1 ratio for bull put spread)
+            # The main order qty specifies how many spreads to close (num_contracts)
+            # Alpaca requires GCD(ratio_qty) = 1 (relatively prime)
             short_leg = OptionLegRequest(
                 symbol=short_put_symbol,
-                ratio_qty=num_contracts,
+                ratio_qty=1,  # Always 1 for 1:1 spread ratio
                 side=OrderSide.BUY,
                 position_intent=PositionIntent.BUY_TO_CLOSE
             )
 
             long_leg = OptionLegRequest(
                 symbol=long_put_symbol,
-                ratio_qty=num_contracts,
+                ratio_qty=1,  # Always 1 for 1:1 spread ratio
                 side=OrderSide.SELL,
                 position_intent=PositionIntent.SELL_TO_CLOSE
             )
