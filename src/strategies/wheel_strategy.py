@@ -714,22 +714,23 @@ class WheelStrategy:
 
     def get_dynamic_position_multiplier(self, wheel_manager) -> float:
         """
-        Reduce position sizing when overall win rate drops.
+        Position sizing multiplier based on portfolio performance.
 
-        Adapts to market regime - reduces risk during losing streaks.
+        NOTE: Previously reduced positions to 0.5-0.75x when win rate was low,
+        but this prevented proper capital utilization. Now always returns 1.0
+        to ensure 14% allocation per position (98% total across 7 positions).
+
+        Risk is managed through:
+        - MAX_WHEEL_POSITIONS (7 positions max)
+        - MAX_SECTOR_POSITIONS (2 per sector)
+        - WHEEL_STOP_LOSS_PCT (-200% ROI)
+        - check_consecutive_losses() prevents revenge trading
 
         Returns:
-            Multiplier: 1.0 (full size) to 0.5 (half size)
+            Multiplier: Always 1.0 (full size)
         """
-        stats = wheel_manager.get_wheel_stats()
-        win_rate = stats.get('win_rate', 100.0)
-
-        if win_rate >= self.config.MIN_WIN_RATE_FOR_FULL_SIZE * 100:
-            return 1.0  # Full size
-        elif win_rate >= 50.0:
-            return 0.75  # 75% size (defensive)
-        else:
-            return 0.5  # 50% size (very defensive)
+        # Always use full position size - other risk controls handle downside
+        return 1.0
 
     def check_consecutive_losses(self, symbol: str, wheel_manager) -> bool:
         """

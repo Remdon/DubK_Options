@@ -71,7 +71,7 @@ class Config:
 
         # Wheel position limits
         self.MAX_WHEEL_POSITIONS = int(os.getenv('MAX_WHEEL_POSITIONS', '7'))  # Max 7 wheel positions
-        self.MAX_CAPITAL_PER_WHEEL = float(os.getenv('MAX_CAPITAL_PER_WHEEL', '0.14'))  # 14% per wheel (98% total)
+        self.MAX_CAPITAL_PER_WHEEL = float(os.getenv('MAX_CAPITAL_PER_WHEEL', '0.18'))  # 18% per wheel (allows proper rounding up to full contracts)
 
         # Wheel DTE parameters
         self.WHEEL_TARGET_DTE = int(os.getenv('WHEEL_TARGET_DTE', '35'))  # 30-45 days optimal
@@ -88,7 +88,7 @@ class Config:
 
         # Wheel risk management (NEW - Based on live trade analysis Nov 2025)
         self.WHEEL_DEEP_ITM_THRESHOLD = float(os.getenv('WHEEL_DEEP_ITM_THRESHOLD', '1.00'))  # Roll if >$1.00 ITM
-        self.MAX_CONTRACTS_PER_SYMBOL = int(os.getenv('MAX_CONTRACTS_PER_SYMBOL', '3'))  # Reduced from 5
+        self.MAX_CONTRACTS_PER_SYMBOL = int(os.getenv('MAX_CONTRACTS_PER_SYMBOL', '10'))  # Increased to allow proper 14% allocation per position
         self.MAX_SECTOR_POSITIONS = int(os.getenv('MAX_SECTOR_POSITIONS', '2'))  # Max 2 positions per sector
         self.MIN_WIN_RATE_FOR_FULL_SIZE = float(os.getenv('MIN_WIN_RATE_FOR_FULL_SIZE', '0.70'))  # 70% win rate
         self.MAX_CONSECUTIVE_LOSSES = int(os.getenv('MAX_CONSECUTIVE_LOSSES', '2'))  # Pause after 2 losses
