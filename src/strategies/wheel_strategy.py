@@ -624,29 +624,22 @@ class WheelStrategy:
         """
         Check if adding this symbol would violate sector diversification limits.
 
-        Prevents concentration risk (e.g., 40% in EV sector causing 84% of losses).
+        NOTE: Sector limit disabled because many symbols fall into 'OTHER' category,
+        blocking valid trades. Risk is managed through:
+        - MAX_WHEEL_POSITIONS (7 positions max)
+        - MAX_CONTRACTS_PER_SYMBOL (10 contracts max)
+        - WHEEL_STOP_LOSS_PCT (-200% ROI)
+        - check_consecutive_losses() prevents revenge trading
 
         Args:
             symbol: Symbol to check
             wheel_manager: WheelManager instance to get current positions
 
         Returns:
-            True if symbol can be added, False if sector limit reached
+            Always True (sector limit disabled)
         """
-        sector = self.get_symbol_sector(symbol)
-
-        # Get current wheel positions
-        all_positions = wheel_manager.get_all_wheel_positions()
-
-        # Count positions in this sector
-        sector_count = sum(1 for pos in all_positions
-                         if self.get_symbol_sector(pos['symbol']) == sector)
-
-        if sector_count >= self.config.MAX_SECTOR_POSITIONS:
-            logging.warning(f"[WHEEL] {symbol}: Sector '{sector}' limit reached "
-                          f"({sector_count}/{self.config.MAX_SECTOR_POSITIONS} positions)")
-            return False
-
+        # Sector limit disabled - too many symbols fall into 'OTHER' category
+        # Risk managed through position limits and stop losses instead
         return True
 
     def should_roll_deep_itm_put(self, position: Dict, current_stock_price: float) -> bool:
